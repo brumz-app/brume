@@ -200,7 +200,10 @@ textarea{width:100%;min-height:120px;margin-top:10px;padding:10px;border-radius:
 .tcg-top{display:flex;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 .tcg-top .tcg-r{color:var(--c)}
 .tcg-art{flex:1;margin:9px 0;border-radius:12px;display:grid;place-items:center;font-size:88px;line-height:1;border:2px solid var(--c);background:radial-gradient(circle at 50% 40%,hsl(var(--h) 55% 34%),hsl(var(--h) 45% 12%) 75%);box-shadow:inset 0 0 30px rgba(0,0,0,.5)}
+.tcg-art{position:relative;overflow:hidden}
 .tcg-art span{filter:drop-shadow(0 6px 10px rgba(0,0,0,.55))}
+.tcg-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .4s}
+.tcg-art.ok img{opacity:1}.tcg-art.ok span{visibility:hidden}
 .tcg-name{font-size:19px;font-weight:800;line-height:1.15;letter-spacing:-.01em;color:var(--text)}
 .tcg-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .tcg-info{font-size:12px;color:var(--muted);margin-top:6px}
@@ -328,7 +331,7 @@ function fetchT(url, opt = {}, ms = 25000) {
 // ---------- stockage ----------
 const LS = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+  set(k, v) { if (window.__brumeReset) return false; try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const parse = (s, d) => { try { return s ? JSON.parse(s) : d; } catch (e) { return d; } };
@@ -338,7 +341,7 @@ const defaultState = () => ({
   autoStart: false, demo: false, onboarded: false
 });
 let S = Object.assign(defaultState(), parse(LS.get('brume.state'), {}));
-const P = Object.assign({tiles: {}, items: {}}, parse(LS.get('brume.pois'), {}));
+const P = Object.assign({tiles: {}, items: {}}, parse(LS.get('brume.pois2'), {}));
 const Z = Object.assign({list: [], miss: []}, parse(LS.get('brume.zones'), {}));
 P.fail = {};
 
@@ -359,14 +362,15 @@ function addCell(i, j) {
 (LS.get('brume.cells') || '').split(';').forEach(s => { if (!s) return; const [i, j] = s.split(',').map(Number); if (Number.isFinite(i) && Number.isFinite(j)) addCell(i, j); });
 const cellOpen = (lat, lng) => { const [i, j] = cellOf(lat, lng); return cells.has(ck(i, j)); };
 
-let saveTimer = 0;
+let saveTimer = 0, resetting = false;
 function saveNow() {
   clearTimeout(saveTimer); saveTimer = 0;
+  if (resetting) return;   // « Tout effacer » en cours : ne rien réécrire (pagehide / visibilitychange)
   LS.set('brume.state', JSON.stringify(S));
   LS.set('brume.cells', Array.from(cells).join(';'));
 }
 function scheduleSave() { if (!saveTimer) saveTimer = setTimeout(saveNow, 4000); }
-const savePois = () => { const {fail, ...rest} = P; if (!LS.set('brume.pois', JSON.stringify(rest))) { /* stockage plein : on vide le cache des lieux */ P.tiles = {}; } };
+const savePois = () => { const {fail, ...rest} = P; if (!LS.set('brume.pois2', JSON.stringify(rest))) { /* stockage plein : on vide le cache des lieux */ P.tiles = {}; } };
 const saveZones = () => LS.set('brume.zones', JSON.stringify(Z));
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); else if (exploring && !S.demo) requestWake(); });
 window.addEventListener('pagehide', saveNow);
@@ -540,10 +544,10 @@ function showCard(id, fresh) {
   modal(`<div class="tcg r-${p.r}" style="--h:${CAT_HUE[p.cat] ?? 220}">
       <div class="tcg-in">
         <div class="tcg-top"><span>${esc(cat.label)}</span><span class="tcg-r">${RAR[p.r].label}</span></div>
-        <div class="tcg-art"><span>${cat.e}</span></div>
+        <div class="tcg-art"><span>${cat.e}</span>${p.img ? `<img src="${esc(p.img)}" alt="" referrerpolicy="no-referrer" onload="this.parentNode.classList.add('ok')" onerror="this.remove()">` : ''}</div>
         <div class="tcg-name">${esc(p.name)}</div>
         ${p.sub ? `<div class="tcg-sub">${esc(p.sub)}</div>` : ''}
-        <div class="tcg-info">${p.zone ? esc(p.zone) + ' · ' : ''}${date}</div>
+        <div class="tcg-info">${p.zone ? esc(p.zone) + ' · ' : ''}${date}${p.img ? ' · 📷 Wikimedia' : ''}</div>
         <div class="tcg-foot"><span>N° ${String(cardNo(p)).padStart(3, '0')}</span><span>+${RAR[p.r].xp} XP</span></div>
       </div>
     </div>
@@ -773,8 +777,52 @@ function parseEl(el) {
   const sub = local && t.name !== local ? t.name : '';
   let r = 'common';
   if (t['heritage:operator'] === 'whc' || t.heritage === '1') r = 'legend';
-  else if (t.wikidata || t.wikipedia || t.heritage) r = 'rare';
-  return {id: el.type[0] + el.id, lat: +(+lat).toFixed(6), lng: +(+lng).toFixed(6), name, sub, cat, r, big: cat === 'parc' || el.type !== 'node'};
+  else if (t.wikipedia || t.heritage) r = 'rare';
+  return {id: el.type[0] + el.id, lat: +(+lat).toFixed(6), lng: +(+lng).toFixed(6), name, sub, cat, r, big: cat === 'parc' || el.type !== 'node',
+    wd: t.wikidata || '', wp: t.wikipedia || '', cm: t.wikimedia_commons || ''};
+}
+// ---------- photos des lieux (Wikimedia) ----------
+const commonsUrl = f => 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(f.replace(/^(File|Fichier):/i, '').replace(/ /g, '_')) + '?width=640';
+async function wmJson(url) {
+  const r = await fetchT(url, {headers: {Accept: 'application/json'}}, 20000);
+  if (!r.ok) throw new Error('wikimedia ' + r.status);
+  return r.json();
+}
+async function resolveImages(list) {
+  // 1) fichier Commons indiqué directement dans OpenStreetMap
+  for (const p of list) if (/^(File|Fichier):/i.test(p.cm)) p.img = commonsUrl(p.cm);
+  // 2) image principale Wikidata (P18)
+  const byQ = {};
+  for (const p of list) if (!p.img && /^Q\d+$/.test(p.wd)) (byQ[p.wd] = byQ[p.wd] || []).push(p);
+  const qs = Object.keys(byQ);
+  for (let i = 0; i < qs.length; i += 50) {
+    const vals = qs.slice(i, i + 50).map(q => 'wd:' + q).join(' ');
+    const j = await wmJson('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(`SELECT ?q ?i WHERE { VALUES ?q { ${vals} } ?q wdt:P18 ?i }`));
+    for (const b of j.results?.bindings || []) {
+      const q = b.q.value.split('/').pop();
+      const url = b.i.value.replace(/^http:/, 'https:') + '?width=640';
+      for (const p of byQ[q] || []) if (!p.img) p.img = url;
+    }
+  }
+  // 3) image de l'article Wikipédia indiqué dans OpenStreetMap
+  const byLang = {};
+  for (const p of list) {
+    if (p.img) continue;
+    const m = /^([a-z][a-z-]{1,7}):(.+)$/.exec(p.wp); if (!m) continue;
+    p.wpt = m[2]; (byLang[m[1]] = byLang[m[1]] || []).push(p);
+  }
+  for (const [lang, ps] of Object.entries(byLang)) {
+    for (let i = 0; i < ps.length; i += 50) {
+      const grp = ps.slice(i, i + 50);
+      const j = await wmJson(`https://${lang}.wikipedia.org/w/api.php?action=query&format=json&origin=*&redirects=1&prop=pageimages&piprop=thumbnail&pithumbsize=640&titles=${encodeURIComponent(grp.map(p => p.wpt).join('|'))}`);
+      const norm = {}, red = {}, pages = {};
+      for (const n of j.query?.normalized || []) norm[n.from] = n.to;
+      for (const r of j.query?.redirects || []) red[r.from] = r.to;
+      for (const pg of Object.values(j.query?.pages || {})) pages[pg.title] = pg;
+      for (const p of grp) { let t = p.wpt; t = norm[t] || t; t = red[t] || t; const src = pages[t]?.thumbnail?.source; if (src && !/logo|blason|coat[_ ]of[_ ]arms|\.svg/i.test(decodeURIComponent(src))) p.img = src; }
+    }
+  }
+  for (const p of list) delete p.wpt;
 }
 async function overpass(q) {
   let last;
@@ -795,19 +843,26 @@ async function loadTile(tk) {
   const s = (ty * POI_TILE).toFixed(4), w = (tx * POI_TILE).toFixed(4), n = ((ty + 1) * POI_TILE).toFixed(4), e = ((tx + 1) * POI_TILE).toFixed(4);
   const bb = `${s},${w},${n},${e}`;
   const q = `[out:json][timeout:30];(
-nwr["amenity"="place_of_worship"]["name"](${bb});
-nwr["tourism"~"^(viewpoint|museum|gallery|attraction)$"]["name"](${bb});
-nwr["historic"~"^(castle|monument|memorial|ruins|archaeological_site|city_gate|tomb|fort|manor|palace|building|church|temple|shrine|monastery)$"]["name"](${bb});
-nwr["leisure"~"^(park|garden)$"]["name"](${bb});
+nwr["wikidata"]["name"]["amenity"="place_of_worship"](${bb});
+nwr["wikipedia"]["name"]["amenity"="place_of_worship"](${bb});
+nwr["wikidata"]["name"]["tourism"~"^(viewpoint|museum|gallery|attraction)$"](${bb});
+nwr["wikipedia"]["name"]["tourism"~"^(viewpoint|museum|gallery|attraction)$"](${bb});
+nwr["wikidata"]["name"]["historic"~"^(castle|monument|memorial|ruins|archaeological_site|city_gate|tomb|fort|manor|palace|building|church|temple|shrine|monastery)$"](${bb});
+nwr["wikipedia"]["name"]["historic"~"^(castle|monument|memorial|ruins|archaeological_site|city_gate|tomb|fort|manor|palace|building|church|temple|shrine|monastery)$"](${bb});
+nwr["wikidata"]["name"]["leisure"~"^(park|garden)$"](${bb});
+nwr["wikipedia"]["name"]["leisure"~"^(park|garden)$"](${bb});
 );out center tags qt;`;
   const json = await overpass(q);
-  const fresh = [];
+  let fresh = [];
   for (const el of json.elements || []) {
     const p = parseEl(el); if (!p) continue;
     // évite les doublons (même lieu en point + bâtiment)
     if (fresh.some(o => o.name === p.name && o.cat === p.cat && hav(o.lat, o.lng, p.lat, p.lng) < 150)) continue;
     fresh.push(p);
   }
+  // on ne garde que les lieux qui ont une photo (Wikidata / Wikipédia / Wikimedia Commons)
+  await resolveImages(fresh);
+  fresh = fresh.filter(p => p.img);
   for (const p of fresh) P.items[p.id] = p;
   P.tiles[tk] = Date.now();
   savePois();
@@ -978,7 +1033,7 @@ function checkDiscoveries() {
 }
 function discover(p) {
   if (S.discovered[p.id]) return;
-  S.discovered[p.id] = {id: p.id, name: p.name, sub: p.sub, cat: p.cat, r: p.r, lat: p.lat, lng: p.lng, big: p.big, t: Date.now(), n: nFound() + 1, zone: currentZone()?.name || ''};
+  S.discovered[p.id] = {id: p.id, name: p.name, sub: p.sub, cat: p.cat, r: p.r, lat: p.lat, lng: p.lng, big: p.big, img: p.img || '', t: Date.now(), n: nFound() + 1, zone: currentZone()?.name || ''};
   cardQueue.push(p.id); setTimeout(pumpCards, 1200);
   const d = getDaily();
   d.pois++; if (!d.cats.includes(p.cat)) d.cats.push(p.cat);
@@ -1349,7 +1404,12 @@ document.addEventListener('click', e => {
   else if (a === 'copy') { try { navigator.clipboard.writeText($('#ioTxt').value).then(() => toast('📋', 'Sauvegarde copiée.', '')); } catch (err) { $('#ioTxt').select(); } }
   else if (a === 'reset') modal(`<div class="bige">⚠️</div><h2>Tout effacer ?</h2><p>Ta carte, ton XP, ta collection et tes succès seront supprimés de ce navigateur. C’est définitif.</p>
       <div class="btns"><button class="btn danger" data-act="reset-yes">Oui, tout effacer</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
-  else if (a === 'reset-yes') { ['brume.state', 'brume.cells', 'brume.zones'].forEach(LS.del); saveNow = () => {}; location.reload(); }
+  else if (a === 'reset-yes') {
+    resetting = true; window.__brumeReset = true; clearTimeout(saveTimer); saveTimer = 0;
+    stopSim(); if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    ['brume.state', 'brume.cells', 'brume.zones', 'brume.pois', 'brume.pois2'].forEach(k => LS.del(k));
+    location.reload();
+  }
   else if (a === 'modal-close') closeModal();
   else if (a === 'start') { closeModal(); S.onboarded = true; S.demo = false; startExplore(); }
   else if (a === 'start-demo') { closeModal(); S.onboarded = true; S.demo = true; saveNow(); startExplore(); }
