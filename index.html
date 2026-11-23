@@ -188,6 +188,24 @@ textarea{width:100%;min-height:120px;margin-top:10px;padding:10px;border-radius:
 .bigl{width:96px;height:96px;margin:6px auto 10px;border-radius:30px;display:grid;place-items:center;font-size:44px;font-weight:800;color:#1b1206;background:linear-gradient(145deg,var(--amber),var(--amber2));box-shadow:0 0 0 8px rgba(255,181,71,.12),0 0 60px -6px rgba(255,170,60,.9);animation:spin .9s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes spin{from{transform:rotate(-25deg) scale(.4);opacity:0}}
 .bige{font-size:64px;margin:4px 0 6px;animation:spin .7s cubic-bezier(.2,.9,.3,1.2)}
+/* ---------- carte à collectionner ---------- */
+.mbox:has(.tcg){background:none;border:0;box-shadow:none;padding:0}
+.tcg{--c:var(--common);width:min(78vw,290px);aspect-ratio:5/7.4;margin:0 auto;padding:5px;border-radius:20px;background:linear-gradient(145deg,var(--c),#2a3350 45%,var(--c));box-shadow:0 24px 60px -16px #000,0 0 40px -10px var(--c);animation:cardin .7s cubic-bezier(.2,.9,.3,1.15);position:relative;overflow:hidden;text-align:center}
+.tcg.r-rare{--c:var(--rare)}.tcg.r-legend{--c:var(--legend);background:linear-gradient(145deg,#ffe38a,#b9791a 40%,#ffe38a 60%,#b9791a)}
+@keyframes cardin{from{opacity:0;transform:perspective(600px) rotateY(90deg) scale(.7)}}
+.tcg::after{content:'';position:absolute;inset:0;border-radius:inherit;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.28) 50%,transparent 65%);background-size:250% 100%;animation:shine 3.2s ease-in-out .8s infinite;pointer-events:none;opacity:0}
+.tcg.r-rare::after,.tcg.r-legend::after{opacity:1}
+@keyframes shine{from{background-position:130% 0}to{background-position:-130% 0}}
+.tcg-in{height:100%;display:flex;flex-direction:column;padding:12px 12px 10px;border-radius:16px;background:linear-gradient(180deg,#1a2132,#0f131c)}
+.tcg-top{display:flex;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.tcg-top .tcg-r{color:var(--c)}
+.tcg-art{flex:1;margin:9px 0;border-radius:12px;display:grid;place-items:center;font-size:88px;line-height:1;border:2px solid var(--c);background:radial-gradient(circle at 50% 40%,hsl(var(--h) 55% 34%),hsl(var(--h) 45% 12%) 75%);box-shadow:inset 0 0 30px rgba(0,0,0,.5)}
+.tcg-art span{filter:drop-shadow(0 6px 10px rgba(0,0,0,.55))}
+.tcg-name{font-size:19px;font-weight:800;line-height:1.15;letter-spacing:-.01em;color:var(--text)}
+.tcg-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.tcg-info{font-size:12px;color:var(--muted);margin-top:6px}
+.tcg-foot{display:flex;justify-content:space-between;margin-top:8px;padding-top:7px;border-top:1px solid var(--line);font-size:12px;font-weight:700;color:var(--c)}
+@media (prefers-reduced-motion:reduce){.tcg,.tcg::after{animation:none}}
 </style>
 </head>
 <body>
@@ -505,7 +523,36 @@ function toast(icon, html, kind = '', ms = 3400) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 320); }, ms);
 }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="mbox">${html}</div>`; m.classList.remove('hidden'); }
-function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
+function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; setTimeout(pumpCards, 350); }
+
+// ---------- cartes à collectionner ----------
+const CAT_HUE = {temple: 330, sanctuaire: 5, eglise: 215, culte: 190, vue: 30, musee: 265, parc: 140, patrimoine: 40, attraction: 300};
+const cardQueue = [];
+function cardNo(p) {
+  if (p.n) return p.n;
+  const ids = Object.values(S.discovered).sort((a, b) => a.t - b.t).map(x => x.id);
+  return ids.indexOf(p.id) + 1;
+}
+function showCard(id, fresh) {
+  const p = S.discovered[id]; if (!p) return;
+  const cat = CATS[p.cat] || {label: 'Lieu', e: '•'};
+  const date = new Date(p.t).toLocaleDateString('fr-FR', {day: 'numeric', month: 'long', year: 'numeric'});
+  modal(`<div class="tcg r-${p.r}" style="--h:${CAT_HUE[p.cat] ?? 220}">
+      <div class="tcg-in">
+        <div class="tcg-top"><span>${esc(cat.label)}</span><span class="tcg-r">${RAR[p.r].label}</span></div>
+        <div class="tcg-art"><span>${cat.e}</span></div>
+        <div class="tcg-name">${esc(p.name)}</div>
+        ${p.sub ? `<div class="tcg-sub">${esc(p.sub)}</div>` : ''}
+        <div class="tcg-info">${p.zone ? esc(p.zone) + ' · ' : ''}${date}</div>
+        <div class="tcg-foot"><span>N° ${String(cardNo(p)).padStart(3, '0')}</span><span>+${RAR[p.r].xp} XP</span></div>
+      </div>
+    </div>
+    <div class="btns"><button class="btn primary" data-act="modal-close">${fresh ? 'Ajouter à ma collection' : 'Fermer'}</button></div>`);
+}
+function pumpCards() {
+  if (!cardQueue.length || !$('#modal').classList.contains('hidden')) return;
+  showCard(cardQueue.shift(), true);
+}
 
 // ---------- défis du jour ----------
 function genChallenges(k) {
@@ -931,7 +978,8 @@ function checkDiscoveries() {
 }
 function discover(p) {
   if (S.discovered[p.id]) return;
-  S.discovered[p.id] = {id: p.id, name: p.name, sub: p.sub, cat: p.cat, r: p.r, lat: p.lat, lng: p.lng, big: p.big, t: Date.now()};
+  S.discovered[p.id] = {id: p.id, name: p.name, sub: p.sub, cat: p.cat, r: p.r, lat: p.lat, lng: p.lng, big: p.big, t: Date.now(), n: nFound() + 1, zone: currentZone()?.name || ''};
+  cardQueue.push(p.id); setTimeout(pumpCards, 1200);
   const d = getDaily();
   d.pois++; if (!d.cats.includes(p.cat)) d.cats.push(p.cat);
   const xp = RAR[p.r].xp;
@@ -989,7 +1037,7 @@ function openPoi(p) {
       <button class="pc-x" data-act="close-card" aria-label="Fermer">✕</button>
     </div>
     <div class="pc-btns">
-      ${st === 'f' ? '' : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
+      ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
     </div>`;
   card.classList.remove('hidden');
@@ -1286,6 +1334,7 @@ document.addEventListener('click', e => {
   else if (a === 'close-card') closeCard();
   else if (a === 'route') { const p = getPoi(id); closeSheet(); if (p) routeTo(p); }
   else if (a === 'clear-route') clearRoute();
+  else if (a === 'show-card') showCard(id, false);
   else if (a === 'goto') { const p = getPoi(id); if (p) { closeSheet(); follow = false; map.setView([p.lat, p.lng], Math.max(map.getZoom(), 16)); setTimeout(() => { refreshMarkers(true); openPoi(p); }, 350); } }
   else if (a === 'zone') { const z = Z.list.find(x => x.id === id); if (z) { closeSheet(); follow = false; map.fitBounds([[z.bbox[1], z.bbox[0]], [z.bbox[3], z.bbox[2]]], {padding: [30, 30]}); } }
   else if (a === 'demo') {
