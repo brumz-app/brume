@@ -2120,8 +2120,9 @@ function ownInner(p) {
 }
 function refreshOwnBox() { const b = $('#ownBox'); if (b && selected) b.innerHTML = ownInner(selected); }
 // ----- bac à sable (mode démo) : mêmes règles que le serveur, avec des rivaux fictifs -----
-const simNow = () => Date.now() + (S.sim.shift || 0);
-const simDefense = o => Math.max(0, o.defense - RULE.decay[o.rarity || 'common'] * (simNow() - o.defense_at) / 864e5);
+// (déclarées avec « function » et non « const » : elles servent dès le démarrage, avant la fin du fichier)
+function simNow() { return Date.now() + (S.sim.shift || 0); }
+function simDefense(o) { return Math.max(0, o.defense - RULE.decay[o.rarity || 'common'] * (simNow() - o.defense_at) / 864e5); }
 function simGet(p) {   // ce que « le serveur » dirait de ce lieu (des rivaux en tiennent environ 45 %, de façon stable)
   let o = S.sim.places[p.id];
   if (!o) {
@@ -2160,7 +2161,7 @@ function simMine() {
   return Object.values(S.sim.places).filter(o => o.owner_id === SIM_ME).map(o => ({id: o.id, name: o.name, lat: o.lat, lng: o.lng, cat: o.cat, rarity: o.rarity,
     defense: simDefense(o), can_reinforce: !o.reinforced_at || simNow() - o.reinforced_at >= 864e5}));
 }
-const myPlaces = () => S.demo ? simMine() : (Net.user ? Net.mine : []);
+function myPlaces() { return S.demo ? simMine() : (Net.user ? Net.mine : []); }
 function simAdvance() {   // +24 h : l'usure joue, et des rivaux peuvent attaquer tes lieux
   S.sim.shift += 864e5;
   const rr = rng32(hashStr('adv' + S.sim.shift)), hit = [], lost = [];
@@ -2328,7 +2329,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchOwned(true); });
 
 // ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
-const BUILD = '2026-11-24.5';   // à changer à chaque nouvelle version publiée
+const BUILD = '2026-11-24.6';   // à changer à chaque nouvelle version publiée
 let updAsked = 0;
 async function checkUpdate() {
   if (updAsked || $('#upd') || document.hidden) return;
