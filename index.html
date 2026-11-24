@@ -272,10 +272,25 @@ textarea.fld{min-height:76px;resize:none}
 .tg{color:var(--teal);font-weight:700}
 .tnum{width:26px;height:26px;border-radius:50%;background:var(--amber);color:#1b1206;border:2px solid #fff;font-weight:800;font-size:13px;display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,0,0,.5)}
 /* possession des lieux */
-.poi.own-me{box-shadow:0 0 0 3px rgba(0,0,0,.28),0 0 0 5px var(--teal),0 0 18px 2px rgba(79,224,181,.7)}
-.poi.own-rival{box-shadow:0 0 0 3px rgba(0,0,0,.28),0 0 0 5px var(--danger),0 0 18px 2px rgba(255,107,107,.65)}
-.poi.own-me::before,.poi.own-rival::before{content:'👑';position:absolute;top:-15px;right:-9px;font-size:13px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
-.poi.own-rival::before{content:'🏴'}
+.poi.own-ally,.poi.own-enemy{box-shadow:0 0 0 3px rgba(0,0,0,.28),0 0 0 5px var(--tc,#888),0 0 16px 1px var(--tc,#888)}
+.poi.own-ally::before,.poi.own-enemy::before{content:'👑';position:absolute;top:-15px;right:-9px;font-size:13px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.poi.own-enemy::before{content:'🏴'}
+/* équipes et lieux publics */
+.teams{display:flex;gap:8px;margin-top:8px}
+.tbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border-radius:14px;background:rgba(255,255,255,.07);border:2px solid transparent;font-size:13px}
+.tbtn span{font-size:26px;line-height:1.1}
+.tbtn.on{border-color:var(--tc);background:rgba(255,255,255,.14)}
+.tlead{margin-top:10px;font-size:13px;font-weight:700;text-align:left;color:var(--muted)}
+.warnbox{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,181,71,.12);border:1px solid rgba(255,181,71,.35);font-size:13px;text-align:left;line-height:1.4;color:#f1dcb6}
+.chk{display:flex;gap:10px;align-items:flex-start;text-align:left;margin-top:12px;font-size:13px;line-height:1.4;color:var(--text)}
+.chk input{flex:none;width:20px;height:20px;margin-top:1px}
+.tscore{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.06);font-weight:700}
+.tscore .tn2{flex:1;text-align:left}
+.cr{display:flex;align-items:center;gap:10px;padding:8px 0}
+.cr+.cr{border-top:1px solid var(--line)}
+.cr .tl2{flex:1;min-width:0}
+.cr .tl2 b{display:block;font-size:14px}
+.cr .tl2 small{color:var(--muted);font-size:12px}
 .own{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.06);font-size:13.5px;line-height:1.35}
 .own .oe{flex:none;font-size:22px}
 .own .ob{flex:1;min-width:0}
@@ -381,7 +396,14 @@ const CATS = {
   musee:      {label:'Musée',         plural:'Musées',          un:'un musée',           e:'🏛️'},
   parc:       {label:'Parc & jardin', plural:'Parcs & jardins', un:'un parc ou jardin',  e:'🌳'},
   patrimoine: {label:'Patrimoine',    plural:'Patrimoine',      un:'un lieu historique', e:'📜'},
-  attraction: {label:'Attraction',    plural:'Attractions',     un:'une attraction',     e:'✨'}
+  attraction: {label:'Attraction',    plural:'Attractions',     un:'une attraction',     e:'✨'},
+  // catégories des lieux publics créés par les joueurs
+  commerce:   {label:'Commerce',      plural:'Commerces',       un:'un commerce',        e:'🛒'},
+  cafe:       {label:'Café & resto',  plural:'Cafés & restos',  un:'un café ou resto',   e:'☕'},
+  nature:     {label:'Nature',        plural:'Nature',          un:'un coin de nature',  e:'🌳'},
+  culture:    {label:'Culture',       plural:'Culture',         un:'un lieu culturel',   e:'🎨'},
+  sport:      {label:'Sport',         plural:'Sport',           un:'un lieu de sport',   e:'🏋️'},
+  coeur:      {label:'Coup de cœur',  plural:'Coups de cœur',   un:'un coup de cœur',    e:'⭐'}
 };
 const RAR = {
   common: {label:'Commun',     xp:20},
@@ -430,7 +452,7 @@ const defaultState = () => ({
   badges: {}, flags: {}, stats: {dist: 0, since: Date.now()}, lastPos: null,
   autoStart: false, demo: false, onboarded: false,
   mine: {}, photoMain: {}, tour: [],
-  sim: {shift: 0, places: {}, attacks: {}},   // bac à sable du mode démo (rivaux simulés, jamais envoyé au serveur)
+  sim: {shift: 0, team: 't1', places: {}, attacks: {}, reinforces: {}},   // bac à sable du mode démo (équipes simulées, jamais envoyé au serveur)
   avatar: {shape: 'dot', color: '#4fe0b5', mascot: '', halo: 'pulse', trail: false, aura: true}
 });
 let S = Object.assign(defaultState(), parse(LS.get('brume.state'), {}));
@@ -981,26 +1003,34 @@ const getPoi = id => P.items[id] || S.discovered[id] || (S.daily && S.daily.myst
 
 // ---------- marqueurs ----------
 const markers = new Map();
-// état partagé avec le serveur (comptes et propriétaires des lieux), voir « serveur » plus bas
-const Net = {user: null, pseudo: '', owned: new Map(), mine: [], ownedAt: 0};
-if (!S.sim || typeof S.sim !== 'object' || !S.sim.places) S.sim = {shift: 0, places: {}, attacks: {}};
-// bac à sable (mode démo) : mêmes règles que le serveur, avec des rivaux fictifs
-const SIM_ME = 'sim-me', SIM_RIVALS = [{id: 'sim-lucie', name: 'Lucie'}, {id: 'sim-marco', name: 'Marco'}, {id: 'sim-zoe', name: 'Zoé'}, {id: 'sim-nolan', name: 'Nolan'}];
-const RULE = {decay: {legend: 4, rare: 6, common: 10}, dmg: {legend: 25, rare: 30, common: 35}};   // points par jour / dégâts d'une attaque
-const myId = () => S.demo ? SIM_ME : (Net.user && Net.user.id);
+// état partagé avec le serveur (comptes, équipes et propriétaires des lieux), voir « serveur » plus bas
+const Net = {user: null, pseudo: '', team: '', owned: new Map(), mine: [], custom: [], ownedAt: 0};
+// les équipes : le serveur ne connaît que les codes t1/t2/t3 ; les noms, emojis et couleurs vivent ici
+const TEAMS = {
+  t1: {name: 'Aurore', e: '🌅', c: '#ffb547'},
+  t2: {name: 'Marée', e: '🌊', c: '#5ab0ff'},
+  t3: {name: 'Sylve', e: '🌿', c: '#7bd88f'}
+};
+const TEAM_IDS = Object.keys(TEAMS);
+const teamOf = t => TEAMS[t] || {name: 'Équipe inconnue', e: '❔', c: '#8a93a8'};
+if (!S.sim || typeof S.sim !== 'object' || !S.sim.places || !S.sim.team) S.sim = {shift: 0, team: 't1', places: {}, attacks: {}, reinforces: {}};
+// bac à sable (mode démo) : mêmes règles que le serveur, avec des équipes fictives
+const RULE = {decay: {legend: 4, rare: 6, common: 10}, dmg: {legend: 25, rare: 30, common: 35}, reinforce: 50};   // points par jour / dégâts d'une attaque / gain d'un renfort
+const myTeam = () => S.demo ? S.sim.team : Net.team;
 const ownedGet = p => S.demo ? simGet(p) : Net.owned.get(p.id);
 const SB_URL = 'https://wquxrieotxpetthiqeru.supabase.co';
 const SB_KEY = 'sb_publishable_9SQjxnzq_Cp5wUNlzLJQUg_Qxv_nqIK';   // clé publique, faite pour être dans l'app : la sécurité vient des règles côté serveur
 const CLAIM_RANGE = 45, PSEUDO_RE = /^[A-Za-z0-9_.-]{3,20}$/;
 const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY, {auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'brume.auth'}}) : null;
 let authMode = 'login', claiming = false;
-const ownCls = p => { const o = ownedGet(p); return o ? (o.owner_id === myId() ? 'own-me' : 'own-rival') : ''; };
+// anneau aux couleurs de l'équipe qui tient le lieu : « ally|#couleur » pour ma propre équipe, « enemy|#couleur » sinon
+const ownCls = p => { const o = ownedGet(p); return o && o.owner_team ? (o.owner_team === myTeam() ? 'ally|' : 'enemy|') + teamOf(o.owner_team).c : ''; };
 function poiState(p) { return S.discovered[p.id] ? 'f' : (cellOpen(p.lat, p.lng) ? 's' : 'm'); }
 function poiIcon(p, st, daily, own) {
   const inner = st === 'm' ? '?' : (CATS[p.cat]?.e || '•');
-  const sz = daily ? 40 : 34;
+  const sz = daily ? 40 : 34, [rel, col] = own ? own.split('|') : ['', ''];
   return L.divIcon({className: '', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
-    html: `<div class="poi ${st} r-${p.r}${daily ? ' daily' : ''}${own ? ' ' + own : ''}">${inner}</div>`});
+    html: `<div class="poi ${st} r-${p.r}${daily ? ' daily' : ''}${rel ? ' own-' + rel : ''}"${col ? ` style="--tc:${col}"` : ''}>${inner}</div>`});
 }
 let mkTimer = 0;
 function refreshMarkers(now) {
@@ -1289,12 +1319,13 @@ function openPoi(p) {
       <button class="pc-x" data-act="close-card" aria-label="Fermer">✕</button>
     </div>
     ${pre ? `<div class="pc-photo"><img src="${esc(p.img)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"><span>📷 Wikimedia · aperçu</span></div>` : ''}
-    ${st === 'f' && (sb || S.demo) && /^[nwr]\d+$/.test(p.id) ?`<div class="own" id="ownBox">${ownInner(p)}</div>` : ''}
+    ${st === 'f' && (sb || S.demo) && /^([nwr]\d+|c[0-9a-f]{12})$/.test(p.id) ?`<div class="own" id="ownBox">${ownInner(p)}</div>` : ''}
     <div class="pc-btns">
       ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
     </div>
-    ${st === 'f' ? `<div class="pc-btns"><button class="btn" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button></div>` : `<div class="pc-btns"><button class="btn" data-act="tour-toggle" data-id="${esc(p.id)}">${inTour(p.id) ? '✓ Dans ma tournée · retirer' : '🧭 Ajouter à ma tournée'}</button></div>`}`;
+    ${st === 'f' ? `<div class="pc-btns"><button class="btn" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button></div>` : `<div class="pc-btns"><button class="btn" data-act="tour-toggle" data-id="${esc(p.id)}">${inTour(p.id) ? '✓ Dans ma tournée · retirer' : '🧭 Ajouter à ma tournée'}</button></div>`}
+    ${p.custom && sb && !S.demo ? `<div class="pc-btns"><button class="btn sm" data-act="report" data-id="${esc(p.id)}">🚩 Signaler ce lieu</button></div>` : ''}`;
   card.classList.remove('hidden');
   $('#explore').classList.add('hidden'); $('#locBtn').classList.add('hidden');
   updateCardMeta();
@@ -1671,11 +1702,11 @@ function viewCollection() {
   }
   const owned = myPlaces();
   if (owned.length) {
-    h += `<div class="sec"><h3>Mes lieux possédés · ${owned.length}${S.demo ? ' · bac à sable' : ''}</h3><div class="card list" style="padding:4px 12px">`;
-    for (const r of owned) {
+    h += `<div class="sec"><h3>Lieux de mon équipe · ${owned.length}${S.demo ? ' · bac à sable' : ''}</h3><div class="card list" style="padding:4px 12px">`;
+    for (const r of owned) {   // les plus fragiles d'abord : ce sont ceux à défendre
       const d = Math.round(r.defense);
       h += `<button class="it" data-act="goto-owned" data-id="${esc(r.id)}"><div class="emo">${CATS[r.cat]?.e || '👑'}</div><div class="grow">
-        <div class="ttl">${esc(r.name)}</div><div class="sub">Défense ${d} %${r.can_reinforce ? ' · <b style="color:var(--teal)">à renforcer</b>' : ''}</div></div></button>`;
+        <div class="ttl">${esc(r.name)}</div><div class="sub">Défense ${d} %${d < 50 ? ' · <b style="color:var(--danger)">à défendre</b>' : ''}${r.custom ? ' · lieu public' : ''}</div></div></button>`;
     }
     h += `</div></div>`;
   }
@@ -1978,8 +2009,22 @@ document.addEventListener('click', e => {
   else if (a === 'tour-clear') { S.tour = []; tourMeta = null; clearRoute(); updateTourBtn(); scheduleSave(); closeModal(); }
   else if (a === 'auth-open') authForm('login');
   else if (a === 'auth-switch') { const keep = {email: ($('#aEmail') || {}).value, pseudo: ($('#aPseudo') || {}).value}; authForm(authMode === 'login' ? 'signup' : 'login', keep); }
+  else if (a === 'noop') { /* rien */ }
   else if (a === 'auth-submit') authSubmit();
   else if (a === 'pseudo-open') pseudoForm();
+  else if (a === 'team-pick') { authTeam = el.dataset.v; document.querySelectorAll('#modal .tbtn').forEach(b => b.classList.toggle('on', b === el)); }
+  else if (a === 'team-open') teamForm();
+  else if (a === 'team-submit') teamSubmit();
+  else if (a === 'custom-new') customForm();
+  else if (a === 'custom-cat') { customCat = el.dataset.v; document.querySelectorAll('#modal [data-act="custom-cat"]').forEach(b => b.classList.toggle('on', b === el)); }
+  else if (a === 'custom-submit') customSubmit();
+  else if (a === 'custom-del') modal(`<div class="bige">🗑️</div><h2>Supprimer ce lieu public ?</h2><p>Il disparaît de la carte pour tous les joueurs. Tu pourras en créer un autre (3 au maximum).</p>
+      <div class="btns"><button class="btn danger" data-act="custom-del-yes" data-id="${esc(id)}">Supprimer</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+  else if (a === 'custom-del-yes') deleteCustom(id);
+  else if (a === 'report') modal(`<div class="bige">🚩</div><h2>Signaler ce lieu ?</h2><p>Signale un lieu inapproprié, dangereux, mal placé ou qui correspond à un domicile privé. Quand 3 joueurs différents le signalent, il est masqué.</p>
+      <div class="btns"><button class="btn danger" data-act="report-yes" data-id="${esc(id)}">Signaler</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+  else if (a === 'report-yes') reportPlace(id);
+  else if (a === 'sim-team') simSetTeam(el.dataset.v);
   else if (a === 'pseudo-submit') pseudoSubmit();
   else if (a === 'signout') signOutNow();
   else if (a === 'delete-account') modal(`<div class="bige">🗑️</div><h2>Supprimer ton compte ?</h2><p>Ton pseudo et ton historique seront supprimés, et tes lieux redeviendront libres. Cette action est définitive.</p>
@@ -2046,15 +2091,28 @@ if (S.lastPos) { ensurePoisAround(S.lastPos[0], S.lastPos[1]); }
 setInterval(() => { renderHud(); }, 60000);
 
 // accès pour les tests
-// ---------- serveur : comptes et possession des lieux (Supabase) ----------
-// (la connexion `sb` et l'état `Net` sont déclarés plus haut, avant les marqueurs : ils servent dès le démarrage)
+// ---------- serveur : comptes, équipes et possession des lieux (Supabase) ----------
+// (la connexion `sb`, l'état `Net`, les équipes `TEAMS` et les règles `RULE` sont déclarés plus haut : ils servent dès le démarrage)
 const CLAIM_ERR = {
-  not_signed_in: 'Connecte-toi d’abord.', no_profile: 'Choisis d’abord un pseudo.', bad_place: 'Ce lieu ne peut pas être pris.',
-  bad_position: 'Position invalide.', accuracy: 'Signal GPS trop imprécis (±40 m maximum). Patiente un instant.',
+  not_signed_in: 'Connecte-toi d’abord.', no_profile: 'Choisis d’abord un pseudo.', no_team: 'Choisis d’abord une équipe.',
+  bad_place: 'Ce lieu ne peut pas être pris.', bad_position: 'Position invalide.', unavailable: 'Ce lieu n’est plus disponible.',
+  accuracy: 'Signal GPS trop imprécis (±40 m maximum). Patiente un instant.',
   rate_limit: 'Trop d’actions à la suite : réessaie dans un moment.', too_far: `Tu es trop loin du lieu (${CLAIM_RANGE} m maximum).`,
-  too_fast: 'Tu t’es déplacé trop vite depuis ta dernière action.', cooldown: 'Tu as déjà attaqué ce lieu aujourd’hui : reviens demain.'
+  too_fast: 'Tu t’es déplacé trop vite depuis ta dernière action.', cooldown: 'Tu as déjà attaqué ce lieu aujourd’hui : reviens demain.',
+  full: 'La défense de ce lieu est déjà au maximum.'
 };
-const poiFromRow = r => ({id: r.id, name: r.name, lat: r.lat, lng: r.lng, cat: r.cat || '', r: r.rarity || 'common', big: false});
+const CUSTOM_ERR = {
+  not_signed_in: 'Connecte-toi d’abord.', no_profile: 'Choisis d’abord un pseudo.', no_team: 'Choisis d’abord une équipe.',
+  bad_position: 'Position invalide.', accuracy: 'Signal GPS trop imprécis (±25 m maximum) : patiente un instant.',
+  bad_name: 'Ce nom n’est pas accepté : 3 à 40 caractères, sans mot inapproprié.', bad_cat: 'Catégorie invalide.',
+  quota: 'Tu as atteint le maximum de 3 lieux publics : supprime-en un pour en créer un autre.',
+  create_cooldown: 'Un seul lieu public par jour : reviens demain.', too_close: 'Un lieu existe déjà à moins de 40 m d’ici.'
+};
+const CUSTOM_CATS = [['commerce', '🛒', 'Commerce'], ['cafe', '☕', 'Café / resto'], ['nature', '🌳', 'Nature'], ['culture', '🎨', 'Culture'], ['sport', '🏋️', 'Sport'], ['coeur', '⭐', 'Coup de cœur']];
+// (fonctions « function » plutôt que « const » : elles restent utilisables dès le démarrage)
+function poiFromRow(r) { return {id: r.id, name: r.name, lat: r.lat, lng: r.lng, cat: r.cat || '', r: r.rarity || 'common', big: false, custom: !!r.custom}; }
+function tn(t) { const x = teamOf(t); return `${x.e} ${x.name}`; }
+let authTeam = '', customCat = '';
 function mapAuthErr(e) {
   const m = String((e && e.message) || e || '');
   if (/invalid login/i.test(m)) return 'E-mail ou mot de passe incorrect.';
@@ -2065,16 +2123,17 @@ function mapAuthErr(e) {
   return 'Erreur : ' + m;
 }
 async function loadProfile() {
-  Net.pseudo = '';
+  Net.pseudo = ''; Net.team = '';
   if (!sb || !Net.user) return;
-  const {data} = await sb.from('profiles').select('pseudo').eq('id', Net.user.id).maybeSingle();
-  Net.pseudo = (data && data.pseudo) || '';
+  const {data} = await sb.from('profiles').select('pseudo, team').eq('id', Net.user.id).maybeSingle();
+  Net.pseudo = (data && data.pseudo) || ''; Net.team = (data && data.team) || '';
 }
-async function loadMine() {
-  Net.mine = [];
+async function loadMine() {   // les lieux de mon équipe (les plus fragiles d'abord) et mes lieux publics
+  Net.mine = []; Net.custom = [];
   if (!sb || !Net.user || !Net.pseudo) return;
-  const {data, error} = await sb.rpc('my_places');
-  if (!error && Array.isArray(data)) Net.mine = data;
+  const [a, b] = await Promise.all([sb.rpc('team_places'), sb.rpc('my_custom_places')]);
+  if (!a.error && Array.isArray(a.data)) Net.mine = a.data;
+  if (!b.error && Array.isArray(b.data)) Net.custom = b.data;
 }
 async function fetchOwned(force) {
   if (!sb || S.demo || map.getZoom() < 13) return;   // en démo, le bac à sable remplace le serveur
@@ -2086,6 +2145,9 @@ async function fetchOwned(force) {
     const ids = new Set(data.map(r => r.id));
     for (const [id, o] of Net.owned) if (!ids.has(id) && b.contains([o.lat, o.lng])) Net.owned.delete(id);
     for (const r of data) Net.owned.set(r.id, r);
+    // lieux publics créés par des joueurs : ils rejoignent la carte comme les autres lieux ; ceux qui ont disparu du serveur en sont retirés
+    for (const r of data) if (r.custom && !P.items[r.id]) P.items[r.id] = poiFromRow(r);
+    for (const id of Object.keys(P.items)) { const q = P.items[id]; if (q.custom && !ids.has(id) && b.contains([q.lat, q.lng])) { delete P.items[id]; delete S.discovered[id]; } }
     refreshMarkers(true); refreshOwnBox();
   } catch (e) {}
 }
@@ -2094,106 +2156,121 @@ async function netInit() {
   try {
     const {data} = await sb.auth.getSession();
     Net.user = (data.session && data.session.user) || null;
-    sb.auth.onAuthStateChange((ev, session) => { setTimeout(() => { Net.user = (session && session.user) || null; if (!Net.user) { Net.pseudo = ''; Net.mine = []; } }, 0); });
+    sb.auth.onAuthStateChange((ev, session) => { setTimeout(() => { Net.user = (session && session.user) || null; if (!Net.user) { Net.pseudo = ''; Net.team = ''; Net.mine = []; Net.custom = []; } }, 0); });
     if (Net.user) { await loadProfile(); await loadMine(); }
     fetchOwned(true); refreshOwnBox();
   } catch (e) { console.warn('[brume] serveur', e); }
 }
-// carte d'un lieu : qui le tient, et que peut-on faire
+// carte d'un lieu : quelle équipe le tient, et que peut-on faire
 function ownInner(p) {
-  const o = ownedGet(p), uid = myId(), isMine = !!(o && uid && o.owner_id === uid);
-  let txt, hint = '', btn = '', bar = '';
-  if (o) {
-    const d = Math.round(o.defense), cls = d < 30 ? 'low' : d < 60 ? 'mid' : '';
-    txt = (isMine ? '<b>Ce lieu est à toi</b>' : `Tenu par <b>${esc(o.owner)}</b>`) + ` · défense ${d} %`;
+  const o = ownedGet(p), mt = myTeam(), held = !!(o && o.owner_team), isMine = !!(held && mt && o.owner_team === mt);
+  let txt, btn = '', bar = '', hints = [], full = false;
+  if (held) {
+    const t = teamOf(o.owner_team), d = Math.round(o.defense), cls = d < 30 ? 'low' : d < 60 ? 'mid' : '';
+    full = d >= 100;
+    txt = `${isMine ? 'Ton équipe' : 'Équipe'} <b style="color:${t.c}">${t.e} ${esc(t.name)}</b> · défense ${d} %`;
     bar = `<div class="dbar ${cls}"><i style="width:${d}%"></i></div>`;
-  } else txt = 'Aucun propriétaire pour l’instant';
-  if (!S.demo && !Net.user) { btn = '<button class="btn sm primary" data-act="auth-open">Se connecter</button>'; hint = 'Connecte-toi pour posséder des lieux.'; }
+  } else txt = 'Aucune équipe ne tient ce lieu';
+  if (!S.demo && !Net.user) { btn = '<button class="btn sm primary" data-act="auth-open">Se connecter</button>'; hints.push('Connecte-toi pour posséder des lieux avec ton équipe.'); }
   else if (!S.demo && !Net.pseudo) btn = '<button class="btn sm primary" data-act="pseudo-open">Choisir un pseudo</button>';
+  else if (!S.demo && !Net.team) { btn = '<button class="btn sm primary" data-act="team-open">Choisir une équipe</button>'; hints.push('Choisis ton équipe pour posséder des lieux.'); }
   else {
     const near = !!me && (me.acc || 0) <= 40 && hav(me.lat, me.lng, p.lat, p.lng) <= CLAIM_RANGE;
-    btn = `<button class="btn sm primary" data-act="claim" ${near && !claiming ? '' : 'disabled'}>${isMine ? '🛡️ Renforcer' : o ? '⚔️ Attaquer' : '👑 Prendre'}</button>`;
-    if (!near) hint = `${me ? 'Rends-toi' : 'Lance l’exploration et rends-toi'} à moins de ${CLAIM_RANGE} m du lieu${S.demo ? '' : ' (GPS ±40 m max)'} pour agir.`;
-    else if (S.demo) hint = '🧪 Bac à sable : rivaux simulés, rien n’est envoyé au serveur.';
+    btn = `<button class="btn sm primary" data-act="claim" ${near && !claiming && !(isMine && full) ? '' : 'disabled'}>${isMine ? '🛡️ Renforcer' : held ? '⚔️ Attaquer' : '👑 Prendre'}</button>`;
+    if (!near) hints.push(`${me ? 'Rends-toi' : 'Lance l’exploration et rends-toi'} à moins de ${CLAIM_RANGE} m du lieu${S.demo ? '' : ' (GPS ±40 m max)'} pour agir.`);
+    else if (isMine && full) hints.push('Défense au maximum : rien à renforcer.');
+    else if (isMine) hints.push(`+${RULE.reinforce} de défense, une fois par jour et par joueur : tes équipiers peuvent se relayer.`);
+    if (S.demo) hints.push('🧪 Bac à sable : équipes simulées, rien n’est envoyé au serveur.');
   }
-  return `<span class="oe">${isMine ? '👑' : o ? '🏴' : '🏳️'}</span><div class="ob">${txt}${bar}${hint ? `<div class="own-hint">${hint}</div>` : ''}</div>${btn}`;
+  return `<span class="oe">${isMine ? '👑' : held ? '🏴' : '🏳️'}</span><div class="ob">${txt}${bar}${hints.length ? `<div class="own-hint">${hints.join(' ')}</div>` : ''}</div>${btn}`;
 }
 function refreshOwnBox() { const b = $('#ownBox'); if (b && selected) b.innerHTML = ownInner(selected); }
-// ----- bac à sable (mode démo) : mêmes règles que le serveur, avec des rivaux fictifs -----
+// ----- bac à sable (mode démo) : mêmes règles que le serveur, avec des équipes fictives -----
 // (déclarées avec « function » et non « const » : elles servent dès le démarrage, avant la fin du fichier)
 function simNow() { return Date.now() + (S.sim.shift || 0); }
 function simDefense(o) { return Math.max(0, o.defense - RULE.decay[o.rarity || 'common'] * (simNow() - o.defense_at) / 864e5); }
-function simGet(p) {   // ce que « le serveur » dirait de ce lieu (des rivaux en tiennent environ 45 %, de façon stable)
+function simGet(p) {   // ce que « le serveur » dirait de ce lieu (une équipe en tient environ 45 %, de façon stable)
   let o = S.sim.places[p.id];
   if (!o) {
     const r = rng32(hashStr('sim' + p.id));
     if (r() >= 0.45) return null;
-    const rv = SIM_RIVALS[Math.floor(r() * SIM_RIVALS.length)], age = r() * 36 * 36e5;
+    const team = TEAM_IDS[Math.floor(r() * TEAM_IDS.length)], age = r() * 36 * 36e5;
     o = S.sim.places[p.id] = {id: p.id, name: p.name, lat: p.lat, lng: p.lng, cat: p.cat || '', rarity: p.r || 'common',
-      owner_id: rv.id, owner: rv.name, defense: 25 + r() * 70, defense_at: simNow() - age, reinforced_at: simNow() - age};
+      owner_team: team, defense: 25 + r() * 70, defense_at: simNow() - age};
   }
-  return o.owner_id ? {...o, defense: simDefense(o)} : null;
+  return o.owner_team ? {...o, defense: simDefense(o)} : null;
 }
 function simClaim(p) {
-  const sim = S.sim, now = simNow();
+  const sim = S.sim, now = simNow(), mt = sim.team;
   simGet(p);
   const o = sim.places[p.id], ok = x => ({ok: true, place: p.id, ...x});
-  if (!o || !o.owner_id) {
+  if (!o || !o.owner_team) {
     const fresh = !o;
-    sim.places[p.id] = {...(o || {id: p.id, name: p.name, lat: p.lat, lng: p.lng, cat: p.cat || '', rarity: p.r || 'common'}), owner_id: SIM_ME, owner: 'Toi', defense: fresh ? 100 : 60, defense_at: now, reinforced_at: fresh ? now : null};
-    return ok({result: 'claimed', defense: fresh ? 100 : 60, owner: 'Toi'});
+    sim.places[p.id] = {...(o || {id: p.id, name: p.name, lat: p.lat, lng: p.lng, cat: p.cat || '', rarity: p.r || 'common'}), owner_team: mt, defense: fresh ? 100 : 60, defense_at: now};
+    return ok({result: 'claimed', defense: fresh ? 100 : 60, owner_team: mt});
   }
-  if (o.owner_id === SIM_ME) {
-    if (o.reinforced_at && now - o.reinforced_at < 864e5) return {ok: false, error: 'already_reinforced', next_at: new Date(o.reinforced_at + 864e5).toISOString()};
-    o.defense = 100; o.defense_at = now; o.reinforced_at = now;
-    return ok({result: 'reinforced', defense: 100, owner: 'Toi'});
+  if (o.owner_team === mt) {
+    const cur = simDefense(o);
+    if (cur >= 99.5) return {ok: false, error: 'full'};
+    const last = sim.reinforces[p.id];
+    if (last && now - last < 864e5) return {ok: false, error: 'already_reinforced', next_at: new Date(last + 864e5).toISOString()};
+    const nd = Math.min(100, cur + RULE.reinforce);
+    o.defense = nd; o.defense_at = now; sim.reinforces[p.id] = now;
+    return ok({result: 'reinforced', defense: nd, owner_team: mt});
   }
   if (sim.attacks[p.id] && now - sim.attacks[p.id] < 864e5) return {ok: false, error: 'cooldown'};
-  const prev = o.owner, nd = simDefense(o) - RULE.dmg[o.rarity || 'common'];
-  if (nd <= 0) {
-    Object.assign(o, {owner_id: SIM_ME, owner: 'Toi', defense: 60, defense_at: now, reinforced_at: null});
-    return ok({result: 'captured', defense: 60, owner: 'Toi', previous_owner: prev});
-  }
+  const prev = o.owner_team, nd = simDefense(o) - RULE.dmg[o.rarity || 'common'];
+  if (nd <= 0) { Object.assign(o, {owner_team: mt, defense: 60, defense_at: now}); return ok({result: 'captured', defense: 60, owner_team: mt, previous_team: prev}); }
   o.defense = nd; o.defense_at = now; sim.attacks[p.id] = now;
-  return ok({result: 'attacked', defense: nd, owner: prev});
+  return ok({result: 'attacked', defense: nd, owner_team: prev});
 }
-function simMine() {
-  return Object.values(S.sim.places).filter(o => o.owner_id === SIM_ME).map(o => ({id: o.id, name: o.name, lat: o.lat, lng: o.lng, cat: o.cat, rarity: o.rarity,
-    defense: simDefense(o), can_reinforce: !o.reinforced_at || simNow() - o.reinforced_at >= 864e5}));
+function simMine() {   // les lieux de mon équipe, les plus fragiles d'abord
+  return Object.values(S.sim.places).filter(o => o.owner_team === S.sim.team)
+    .map(o => ({id: o.id, name: o.name, lat: o.lat, lng: o.lng, cat: o.cat, rarity: o.rarity, defense: simDefense(o)})).sort((a, b) => a.defense - b.defense);
 }
 function myPlaces() { return S.demo ? simMine() : (Net.user ? Net.mine : []); }
-function simAdvance() {   // +24 h : l'usure joue, et des rivaux peuvent attaquer tes lieux
+function simAdvance() {   // +24 h : l'usure joue, des équipes adverses attaquent tes lieux, des équipiers fictifs en renforcent
   S.sim.shift += 864e5;
-  const rr = rng32(hashStr('adv' + S.sim.shift)), hit = [], lost = [];
+  const rr = rng32(hashStr('adv' + S.sim.shift)), mt = S.sim.team, enemies = TEAM_IDS.filter(t => t !== mt), hit = [], lost = [], helped = [];
   for (const o of Object.values(S.sim.places)) {
-    if (o.owner_id !== SIM_ME || rr() >= 0.5) continue;
-    const rv = SIM_RIVALS[Math.floor(rr() * SIM_RIVALS.length)], nd = simDefense(o) - RULE.dmg[o.rarity || 'common'];
-    if (nd <= 0) { Object.assign(o, {owner_id: rv.id, owner: rv.name, defense: 60, defense_at: simNow(), reinforced_at: null}); lost.push(`${o.name} (${rv.name})`); }
-    else { o.defense = nd; o.defense_at = simNow(); hit.push(o.name); }
+    if (o.owner_team !== mt) continue;
+    if (rr() < 0.5) {
+      const et = enemies[Math.floor(rr() * enemies.length)], nd = simDefense(o) - RULE.dmg[o.rarity || 'common'];
+      if (nd <= 0) { Object.assign(o, {owner_team: et, defense: 60, defense_at: simNow()}); lost.push(`${o.name} (${tn(et)})`); }
+      else { o.defense = nd; o.defense_at = simNow(); hit.push(o.name); }
+    } else if (rr() < 0.4 && simDefense(o) < 99.5) {
+      o.defense = Math.min(100, simDefense(o) + RULE.reinforce); o.defense_at = simNow(); helped.push(o.name);
+    }
   }
   toast('⏩', `+24 h simulées (total : +${Math.round(S.sim.shift / 36e5)} h).`, '', 3000);
-  if (hit.length) setTimeout(() => toast('⚔️', `Des rivaux ont attaqué ${hit.length} de tes lieux.`, 'rare', 4500), 600);
-  if (lost.length) setTimeout(() => toast('🏴', `Perdu : ${esc(lost.join(', '))}.`, 'err', 5500), 1200);
+  if (hit.length) setTimeout(() => toast('⚔️', `Des équipes adverses ont attaqué ${hit.length} lieu${hit.length > 1 ? 'x' : ''} de ton équipe.`, 'rare', 4500), 600);
+  if (helped.length) setTimeout(() => toast('🛡️', `Des équipiers ont renforcé ${helped.length} lieu${helped.length > 1 ? 'x' : ''}.`, '', 4500), 1100);
+  if (lost.length) setTimeout(() => toast('🏴', `Perdu : ${esc(lost.join(', '))}.`, 'err', 5500), 1600);
   scheduleSave(); refreshMarkers(true); refreshOwnBox();
   const sbd = $('#sheetBody'); if (sbd && tab !== 'carte') { const st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
 }
 function simReset() {
-  S.sim = {shift: 0, places: {}, attacks: {}};
+  S.sim = {shift: 0, team: S.sim.team, places: {}, attacks: {}, reinforces: {}};
   scheduleSave(); refreshMarkers(true); refreshOwnBox(); toast('↺', 'Bac à sable réinitialisé.', '');
   const sbd = $('#sheetBody'); if (sbd && tab !== 'carte') renderSheet();
+}
+function simSetTeam(t) {
+  if (!TEAMS[t]) return;
+  S.sim.team = t; scheduleSave(); refreshMarkers(true); refreshOwnBox(); toast(teamOf(t).e, `Équipe de test : <b>${esc(teamOf(t).name)}</b>.`, '');
+  const sbd = $('#sheetBody'); if (sbd && tab !== 'carte') { const st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
 }
 // résultat d'une action (serveur ou bac à sable) : messages et XP
 function handleClaimResult(p, r) {
   if (!r.ok) {
     const hrs = r.next_at ? Math.max(1, Math.ceil((new Date(r.next_at) - (S.demo ? simNow() : Date.now())) / 36e5)) : 0;
-    toast('🚫', r.error === 'already_reinforced' ? `Déjà renforcé : reviens dans ${hrs} h.` : (CLAIM_ERR[r.error] || 'Action refusée.'), 'err', 4500);
+    toast('🚫', r.error === 'already_reinforced' ? `Tu as déjà renforcé ce lieu : reviens dans ${hrs} h (un équipier peut le faire).` : (CLAIM_ERR[r.error] || 'Action refusée.'), 'err', 4500);
     return false;
   }
   const name = esc(p.name);
-  if (r.result === 'claimed') { toast('👑', `Tu possèdes maintenant <b>${name}</b> !`, 'gold', 4500); addXp(60); }
-  else if (r.result === 'reinforced') { toast('🛡️', `<b>${name}</b> : défense remise à 100 %.`, '', 4000); addXp(20); }
-  else if (r.result === 'attacked') { toast('⚔️', `Attaque réussie : la défense de <b>${esc(r.owner)}</b> tombe à ${Math.round(r.defense)} %.`, 'rare', 4500); addXp(15); }
-  else if (r.result === 'captured') { toast('👑', `Tu prends <b>${name}</b> à <b>${esc(r.previous_owner || '')}</b> !`, 'legend', 5000); addXp(120); }
+  if (r.result === 'claimed') { toast('👑', `Ton équipe ${esc(tn(r.owner_team))} tient maintenant <b>${name}</b> !`, 'gold', 4500); addXp(60); }
+  else if (r.result === 'reinforced') { toast('🛡️', `<b>${name}</b> : défense à ${Math.round(r.defense)} %.`, '', 4000); addXp(20); }
+  else if (r.result === 'attacked') { toast('⚔️', `Attaque réussie contre l’équipe ${esc(tn(r.owner_team))} : défense à ${Math.round(r.defense)} %.`, 'rare', 4500); addXp(15); }
+  else if (r.result === 'captured') { toast('👑', `Ton équipe ${esc(tn(r.owner_team))} prend <b>${name}</b> à l’équipe ${esc(tn(r.previous_team))} !`, 'legend', 5000); addXp(120); }
   scheduleSave();
   return true;
 }
@@ -2202,6 +2279,7 @@ async function claimSelected() {
   if (!p || claiming) return;
   if (S.demo) {
     if (!me) return;
+    if (hav(me.lat, me.lng, p.lat, p.lng) > CLAIM_RANGE) { toast('🚫', CLAIM_ERR.too_far, 'err'); return; }
     handleClaimResult(p, simClaim(p)); refreshMarkers(true); refreshOwnBox();
     const sbd = $('#sheetBody'); if (sbd && tab !== 'carte') renderSheet();
     return;
@@ -2220,35 +2298,46 @@ async function claimSelected() {
   } catch (e) { toast('⚠️', 'Serveur injoignable : réessaie.', 'err'); }
   finally { claiming = false; refreshOwnBox(); }
 }
-// compte : connexion, création, pseudo
+// compte : connexion, création, pseudo, équipe
+function teamPicker(sel) {
+  return `<div class="tlead">Ton équipe : choix définitif, tu ne pourras plus en changer.</div><div class="teams">${TEAM_IDS.map(t => { const x = TEAMS[t];
+    return `<button type="button" class="tbtn ${sel === t ? 'on' : ''}" style="--tc:${x.c}" data-act="team-pick" data-v="${t}"><span>${x.e}</span><b>${esc(x.name)}</b></button>`; }).join('')}</div>`;
+}
 function authForm(mode, keep) {
   authMode = mode; const signup = mode === 'signup';
   modal(`<h2>${signup ? 'Créer un compte' : 'Se connecter'}</h2>
-    <p>${signup ? 'Un compte te permet de posséder des lieux et de les retrouver sur tous tes appareils.' : 'Retrouve tes lieux et ton pseudo.'}</p>
+    <p>${signup ? 'Un compte te permet de posséder des lieux avec ton équipe et de les retrouver sur tous tes appareils.' : 'Retrouve ton équipe, ton pseudo et tes lieux.'}</p>
     <input class="fld" id="aEmail" type="email" autocomplete="email" inputmode="email" autocapitalize="off" placeholder="E-mail" value="${esc((keep && keep.email) || '')}">
     <input class="fld" id="aPass" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" placeholder="Mot de passe (8 caractères minimum)">
-    ${signup ? `<input class="fld" id="aPseudo" maxlength="20" autocapitalize="off" autocomplete="off" placeholder="Pseudo public (lettres, chiffres, _ . -)" value="${esc((keep && keep.pseudo) || '')}">` : ''}
+    ${signup ? `<input class="fld" id="aPseudo" maxlength="20" autocapitalize="off" autocomplete="off" placeholder="Pseudo public (lettres, chiffres, _ . -)" value="${esc((keep && keep.pseudo) || '')}">${teamPicker(authTeam)}` : ''}
     <div class="auth-err" id="aErr"></div>
     <div class="btns"><button class="btn primary" data-act="auth-submit">${signup ? 'Créer mon compte' : 'Se connecter'}</button>
       <button class="btn" data-act="auth-switch">${signup ? 'J’ai déjà un compte' : 'Créer un compte'}</button>
       <button class="btn" data-act="modal-close">Annuler</button></div>`);
 }
 function pseudoForm(msg) {
-  modal(`<h2>Choisis ton pseudo</h2><p>Il sera visible par les autres joueurs quand tu possèdes un lieu.</p>
+  modal(`<h2>Choisis ton pseudo et ton équipe</h2><p>Ton pseudo sera visible dans le classement des joueurs.</p>
     <input class="fld" id="pPseudo" maxlength="20" autocapitalize="off" autocomplete="off" placeholder="Pseudo (lettres, chiffres, _ . -)">
+    ${teamPicker(authTeam)}
     <div class="auth-err" id="pErr">${esc(msg || '')}</div>
     <div class="btns"><button class="btn primary" data-act="pseudo-submit">Valider</button><button class="btn" data-act="modal-close">Plus tard</button></div>`);
 }
-async function createProfile(pseudo) {
-  const {error} = await sb.from('profiles').insert({id: Net.user.id, pseudo});
+function teamForm() {
+  modal(`<h2>Choisis ton équipe</h2><p>Tu tiens les lieux avec ton équipe : vous pouvez les renforcer ensemble, et attaquer ceux des autres équipes.</p>
+    ${teamPicker(authTeam)}
+    <div class="auth-err" id="tErr"></div>
+    <div class="btns"><button class="btn primary" data-act="team-submit">Valider mon équipe</button><button class="btn" data-act="modal-close">Plus tard</button></div>`);
+}
+async function createProfile(pseudo, team) {
+  const {error} = await sb.from('profiles').insert({id: Net.user.id, pseudo, team});
   if (error) { if (error.code === '23505') { pseudoForm('Ce pseudo est déjà pris : choisis-en un autre.'); return false; } throw error; }
-  Net.pseudo = pseudo; return true;
+  Net.pseudo = pseudo; Net.team = team; return true;
 }
 async function afterAuth() {
   closeModal(); await loadMine(); fetchOwned(true);
-  toast('✅', `Connecté en tant que <b>${esc(Net.pseudo)}</b>.`, '');
+  toast('✅', `Connecté : <b>${esc(Net.pseudo)}</b> · ${esc(tn(Net.team))}`, '');
   if (tab === 'profil' || tab === 'collection') { const sbd = $('#sheetBody'), st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
-  refreshOwnBox();
+  refreshMarkers(true); refreshOwnBox();
 }
 async function authSubmit() {
   const email = ($('#aEmail').value || '').trim(), pass = $('#aPass').value || '', signup = authMode === 'signup';
@@ -2257,6 +2346,7 @@ async function authSubmit() {
   if (!/^\S+@\S+\.\S+$/.test(email)) return err('E-mail invalide.');
   if (pass.length < 8) return err('Mot de passe : 8 caractères minimum.');
   if (signup && !PSEUDO_RE.test(pseudo)) return err('Pseudo : 3 à 20 caractères (lettres, chiffres, _ . -).');
+  if (signup && !TEAMS[authTeam]) return err('Choisis ton équipe : ce choix est définitif.');
   err('…');
   try {
     if (signup) {
@@ -2264,12 +2354,13 @@ async function authSubmit() {
       if (error) return err(mapAuthErr(error));
       if (!data.session) return err('Un compte existe peut-être déjà avec cet e-mail : essaie de te connecter.');
       Net.user = data.user;
-      if (!(await createProfile(pseudo))) return;
+      if (!(await createProfile(pseudo, authTeam))) return;
     } else {
       const {data, error} = await sb.auth.signInWithPassword({email, password: pass});
       if (error) return err(mapAuthErr(error));
       Net.user = data.user; await loadProfile();
       if (!Net.pseudo) { pseudoForm(); return; }
+      if (!Net.team) { teamForm(); return; }
     }
     await afterAuth();
   } catch (e) { err('Serveur injoignable : vérifie ta connexion.'); }
@@ -2278,11 +2369,22 @@ async function pseudoSubmit() {
   const pseudo = ($('#pPseudo').value || '').trim(), err = m => { const e = $('#pErr'); if (e) e.textContent = m; };
   if (!Net.user) return err('Connecte-toi d’abord.');
   if (!PSEUDO_RE.test(pseudo)) return err('Pseudo : 3 à 20 caractères (lettres, chiffres, _ . -).');
-  try { if (await createProfile(pseudo)) await afterAuth(); } catch (e) { err('Serveur injoignable : réessaie.'); }
+  if (!TEAMS[authTeam]) return err('Choisis ton équipe : ce choix est définitif.');
+  try { if (await createProfile(pseudo, authTeam)) await afterAuth(); } catch (e) { err('Serveur injoignable : réessaie.'); }
+}
+async function teamSubmit() {
+  const err = m => { const e = $('#tErr'); if (e) e.textContent = m; };
+  if (!Net.user || !Net.pseudo) return err('Connecte-toi d’abord.');
+  if (!TEAMS[authTeam]) return err('Choisis une équipe.');
+  try {
+    const {error} = await sb.from('profiles').update({team: authTeam}).eq('id', Net.user.id);
+    if (error) return err(/team_locked/.test(error.message || '') ? 'Ton équipe est déjà choisie.' : 'Serveur injoignable : réessaie.');
+    Net.team = authTeam; await afterAuth();
+  } catch (e) { err('Serveur injoignable : réessaie.'); }
 }
 async function signOutNow() {
   try { await sb.auth.signOut(); } catch (e) {}
-  Net.user = null; Net.pseudo = ''; Net.mine = []; refreshMarkers(true); refreshOwnBox();
+  Net.user = null; Net.pseudo = ''; Net.team = ''; Net.mine = []; Net.custom = []; refreshMarkers(true); refreshOwnBox();
   toast('👋', 'Tu es déconnecté.', '');
   if (tab === 'profil' || tab === 'collection') renderSheet();
 }
@@ -2291,45 +2393,123 @@ async function deleteAccount() {
   try {
     const {error} = await sb.rpc('delete_account'); if (error) throw error;
     try { await sb.auth.signOut(); } catch (e) {}
-    Net.user = null; Net.pseudo = ''; Net.mine = []; Net.owned.clear(); fetchOwned(true);
+    for (const id of Object.keys(P.items)) if (P.items[id].custom) { delete P.items[id]; delete S.discovered[id]; }
+    Net.user = null; Net.pseudo = ''; Net.team = ''; Net.mine = []; Net.custom = []; Net.owned.clear(); fetchOwned(true);
     toast('🗑️', 'Ton compte a été supprimé.', '');
     if (tab === 'profil' || tab === 'collection') renderSheet();
   } catch (e) { toast('⚠️', 'Suppression impossible pour l’instant : réessaie.', 'err'); }
 }
 async function openLeaderboard() {
   if (!sb) return;
-  let rows;
-  try { const {data, error} = await sb.rpc('leaderboard'); if (error) throw error; rows = data || []; }
-  catch (e) { toast('⚠️', 'Classement indisponible pour l’instant.', 'err'); return; }
-  const list = rows.length ? rows.map((r, i) => `<div class="lbr ${r.pseudo === Net.pseudo ? 'me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${esc(r.pseudo)}</span><span class="ct">👑 ${r.places}</span></div>`).join('')
-    : '<div class="empty">Personne ne possède de lieu pour l’instant : sois le premier !</div>';
-  modal(`<h2>🏆 Classement</h2><p>Les joueurs qui possèdent le plus de lieux.</p><div class="lb">${list}</div>
+  let teams, players;
+  try {
+    const [a, b] = await Promise.all([sb.rpc('team_scores'), sb.rpc('leaderboard')]);
+    if (a.error || b.error) throw (a.error || b.error);
+    teams = a.data || []; players = b.data || [];
+  } catch (e) { toast('⚠️', 'Classement indisponible pour l’instant.', 'err'); return; }
+  const tr = teams.map(r => { const t = teamOf(r.team); return `<div class="tscore"><span style="font-size:22px">${t.e}</span><span class="tn2" style="color:${t.c}">${esc(t.name)}${r.team === Net.team ? ' · ton équipe' : ''}</span><span class="ct">👑 ${r.places}</span></div>`; }).join('');
+  const pr = players.length ? players.map((r, i) => `<div class="lbr ${r.pseudo === Net.pseudo ? 'me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${esc(teamOf(r.team).e)} ${esc(r.pseudo)}</span><span class="ct">${r.points} pts</span></div>`).join('')
+    : '<div class="empty">Personne n’a encore joué cette semaine.</div>';
+  modal(`<h2>🏆 Classement</h2><p>Lieux tenus par chaque équipe</p><div class="lb">${tr}</div>
+    <p style="margin-top:16px">Joueurs les plus actifs · 7 derniers jours</p><div class="lb">${pr}</div>
     <div class="btns"><button class="btn" data-act="modal-close">Fermer</button></div>`);
 }
+// lieux publics créés par les joueurs
+function customForm(msg) {
+  if (S.demo) { toast('🧪', 'La création de lieux publics est indisponible en mode démo.', 'err'); return; }
+  if (!sb || !Net.user) { authForm('login'); return; }
+  if (!Net.pseudo) { pseudoForm(); return; }
+  if (!Net.team) { teamForm(); return; }
+  if (!me) { toast('📍', 'Lance l’exploration : le lieu sera créé là où tu te trouves.', 'err'); return; }
+  modal(`<h2>Créer un lieu public</h2>
+    <div class="warnbox"><b>Le lieu sera créé là où tu te trouves</b> et visible par <b>tous les joueurs</b>, qui devront venir sur place pour l’attaquer. Choisis un endroit <b>accessible au public</b> (commerce, café, parc…). <b>Jamais un domicile privé.</b></div>
+    <div class="avrow" style="justify-content:center">${CUSTOM_CATS.map(([k, e, n]) => `<button type="button" class="avo ${customCat === k ? 'on' : ''}" data-act="custom-cat" data-v="${k}"><span class="em">${e}</span>${esc(n)}</button>`).join('')}</div>
+    <input class="fld" id="cName" maxlength="40" autocomplete="off" placeholder="Nom du lieu (3 à 40 caractères)">
+    <label class="chk"><input type="checkbox" id="cOk"><span>Je confirme que ce lieu est accessible au public et que ce n’est pas un domicile privé.</span></label>
+    <div class="auth-err" id="cErr">${esc(msg || '')}</div>
+    <div class="btns"><button class="btn primary" data-act="custom-submit">Créer le lieu</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+}
+async function customSubmit() {
+  const name = ($('#cName').value || '').trim().replace(/\s+/g, ' '), err = m => { const e = $('#cErr'); if (e) e.textContent = m; };
+  if (!customCat) return err('Choisis une catégorie.');
+  if (name.length < 3 || name.length > 40) return err('Nom : 3 à 40 caractères.');
+  if (!$('#cOk').checked) return err('Coche la confirmation : le lieu doit être public.');
+  if (!me) return err('Position GPS indisponible.');
+  err('…');
+  try {
+    const {data: r, error} = await sb.rpc('create_custom_place', {p_name: name, p_cat: customCat, u_lat: me.lat, u_lng: me.lng, u_acc: me.acc || 0});
+    if (error || !r) return err('Serveur injoignable : réessaie.');
+    if (!r.ok) return err(CUSTOM_ERR[r.error] || 'Création refusée.');
+    P.items[r.id] = {id: r.id, name: r.name, lat: +me.lat.toFixed(5), lng: +me.lng.toFixed(5), cat: r.cat, r: 'common', big: false, custom: true};
+    savePois(); closeModal();
+    toast('📍', `Lieu public créé : <b>${esc(r.name)}</b>. Ton équipe le tient !`, 'gold', 4500);
+    if (!S.discovered[r.id]) discover(P.items[r.id]);
+    await Promise.all([fetchOwned(true), loadMine()]);
+    if (tab === 'profil') { const sbd = $('#sheetBody'), st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
+  } catch (e) { err('Serveur injoignable : réessaie.'); }
+}
+async function deleteCustom(id) {
+  closeModal();
+  try {
+    const {data: r, error} = await sb.rpc('delete_custom_place', {p_id: id});
+    if (error || !r || !r.ok) { toast('⚠️', 'Suppression impossible pour l’instant : réessaie.', 'err'); return; }
+    delete P.items[id]; delete S.discovered[id]; Net.owned.delete(id); savePois(); scheduleSave();
+    toast('🗑️', 'Lieu public supprimé.', '');
+    await Promise.all([fetchOwned(true), loadMine()]);
+    refreshMarkers(true);
+    if (tab === 'profil' || tab === 'collection') { const sbd = $('#sheetBody'), st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
+  } catch (e) { toast('⚠️', 'Suppression impossible pour l’instant : réessaie.', 'err'); }
+}
+async function reportPlace(id) {
+  closeModal();
+  try {
+    const {data: r, error} = await sb.rpc('report_place', {p_id: id, p_reason: 'signalé depuis l’app'});
+    if (error || !r || !r.ok) { toast('⚠️', r && r.error === 'not_signed_in' ? 'Connecte-toi pour signaler un lieu.' : 'Signalement impossible pour l’instant.', 'err'); return; }
+    toast('🚩', 'Merci : ton signalement a été envoyé. Un lieu signalé par 3 joueurs est masqué.', '', 5000);
+  } catch (e) { toast('⚠️', 'Signalement impossible pour l’instant.', 'err'); }
+}
 function viewAccount() {
-  if (S.demo) return `<div class="sec"><h3>Possession des lieux · bac à sable</h3><div class="card">
-    <div class="ttl">🧪 Mode démo : rivaux simulés</div>
-    <div class="sub">Des joueurs fictifs tiennent des lieux autour de toi. Rien n’est envoyé au serveur ni au classement. Les délais de 24 h sont simulés : avance le temps pour tester le renforcement, les attaques et l’usure.</div>
+  if (S.demo) {
+    const n = simMine().length;
+    return `<div class="sec"><h3>Possession des lieux · bac à sable</h3><div class="card">
+    <div class="ttl">🧪 Mode démo : équipes simulées</div>
+    <div class="sub">Tu joues pour l’équipe choisie ci-dessous ; les autres équipes sont fictives. Rien n’est envoyé au serveur. Les délais de 24 h sont simulés : avance le temps pour tester les renforts, les attaques et l’usure.</div>
+    <div class="tlead">Ton équipe de test</div>
+    <div class="teams">${TEAM_IDS.map(t => { const x = TEAMS[t]; return `<button type="button" class="tbtn ${S.sim.team === t ? 'on' : ''}" style="--tc:${x.c}" data-act="sim-team" data-v="${t}"><span>${x.e}</span><b>${esc(x.name)}</b></button>`; }).join('')}</div>
     <div class="pc-btns"><button class="btn sm primary" data-act="sim-advance">⏩ Avancer de 24 h</button><button class="btn sm danger" data-act="sim-reset">↺ Réinitialiser</button></div>
-    <p class="note">Temps simulé : +${Math.round((S.sim.shift || 0) / 36e5)} h · ${simMine().length} lieu${simMine().length > 1 ? 'x' : ''} à toi</p></div></div>`;
-  let h = `<div class="sec"><h3>Compte</h3><div class="card">`;
+    <p class="note">Temps simulé : +${Math.round((S.sim.shift || 0) / 36e5)} h · ${n} lieu${n > 1 ? 'x' : ''} tenu${n > 1 ? 's' : ''} par ton équipe</p></div></div>`;
+  }
+  let h = `<div class="sec"><h3>Compte et équipe</h3><div class="card">`;
   if (!sb) h += `<div class="ttl">Serveur indisponible</div><div class="sub">Impossible de joindre le serveur pour le moment : la possession de lieux est désactivée.</div>`;
-  else if (!Net.user) h += `<div class="ttl">👑 Possède des lieux</div><div class="sub">Crée un compte pour prendre des lieux, les défendre et défier d’autres joueurs.</div>
+  else if (!Net.user) h += `<div class="ttl">👑 Possède des lieux avec ton équipe</div><div class="sub">Crée un compte, choisis ton équipe (définitive), puis prends, renforce et attaque des lieux.</div>
     <div class="pc-btns"><button class="btn sm primary" data-act="auth-open">Se connecter</button><button class="btn sm" data-act="leaderboard">🏆 Classement</button></div>`;
-  else h += `<div class="ttl">${Net.pseudo ? esc(Net.pseudo) : 'Pseudo à choisir'}</div><div class="sub">${esc(Net.user.email || '')} · ${Net.mine.length} lieu${Net.mine.length > 1 ? 'x' : ''} possédé${Net.mine.length > 1 ? 's' : ''}</div>
-    <div class="pc-btns">${Net.pseudo ? '' : '<button class="btn sm primary" data-act="pseudo-open">Choisir un pseudo</button>'}<button class="btn sm" data-act="leaderboard">🏆 Classement</button><button class="btn sm" data-act="signout">Déconnexion</button></div>
-    <div class="pc-btns"><button class="btn sm danger" data-act="delete-account">Supprimer mon compte</button></div>`;
-  return h + `</div></div>`;
+  else {
+    const t = Net.team ? teamOf(Net.team) : null, n = Net.mine.length;
+    h += `<div class="ttl">${t ? `<span style="color:${t.c}">${t.e}</span> ` : ''}${Net.pseudo ? esc(Net.pseudo) : 'Pseudo à choisir'}</div>
+      <div class="sub">${t ? `Équipe <b style="color:${t.c}">${esc(t.name)}</b> · ` : ''}${esc(Net.user.email || '')}${t ? ` · ${n} lieu${n > 1 ? 'x' : ''} tenu${n > 1 ? 's' : ''} par ton équipe` : ''}</div>
+      <div class="pc-btns">${!Net.pseudo ? '<button class="btn sm primary" data-act="pseudo-open">Choisir un pseudo</button>' : !Net.team ? '<button class="btn sm primary" data-act="team-open">Choisir une équipe</button>' : ''}<button class="btn sm" data-act="leaderboard">🏆 Classement</button><button class="btn sm" data-act="signout">Déconnexion</button></div>
+      <div class="pc-btns"><button class="btn sm danger" data-act="delete-account">Supprimer mon compte</button></div>`;
+  }
+  h += `</div></div>`;
+  if (sb && Net.user && Net.pseudo && Net.team) {
+    h += `<div class="sec"><h3>Mes lieux publics · ${Net.custom.length} / 3</h3><div class="card">
+      <div class="sub">Crée jusqu’à 3 lieux publics (un commerce, un café, un coin préféré…) que ton équipe tiendra et que les autres équipes pourront attaquer. Jamais un domicile privé.</div>`;
+    for (const c of Net.custom) h += `<div class="cr"><span style="font-size:22px">${CATS[c.cat]?.e || '📍'}</span><div class="tl2"><b>${esc(c.name)}</b><small>${c.status === 'hidden' ? '🚩 masqué après signalements' : `${esc(tn(c.owner_team))} · défense ${Math.round(c.defense)} %`}</small></div><button class="pc-x" data-act="custom-del" data-id="${esc(c.id)}" aria-label="Supprimer">🗑️</button></div>`;
+    h += `<div class="pc-btns"><button class="btn sm primary" data-act="custom-new">➕ Créer ici</button></div>
+      <p class="note">Le lieu est créé là où tu te trouves. Un seul par jour.</p></div></div>`;
+  }
+  return h;
 }
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !e.target || !e.target.id) return;
   if (e.target.id === 'aEmail' || e.target.id === 'aPass' || e.target.id === 'aPseudo') authSubmit();
   else if (e.target.id === 'pPseudo') pseudoSubmit();
+  else if (e.target.id === 'cName') customSubmit();
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchOwned(true); });
 
 // ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
-const BUILD = '2026-11-24.6';   // à changer à chaque nouvelle version publiée
+const BUILD = '2026-11-24.7';   // à changer à chaque nouvelle version publiée
 let updAsked = 0;
 async function checkUpdate() {
   if (updAsked || $('#upd') || document.hidden) return;
@@ -2347,7 +2527,7 @@ async function checkUpdate() {
 setTimeout(checkUpdate, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
-window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder, Net, sb, fetchOwned, ownInner, simClaim, simAdvance, simMine, simGet};
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder, Net, sb, fetchOwned, ownInner, simClaim, simAdvance, simMine, simGet, TEAMS};
 })();
 </script>
 </body>
