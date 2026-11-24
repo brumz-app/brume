@@ -271,6 +271,27 @@ textarea.fld{min-height:76px;resize:none}
 .tsum b{color:var(--amber)}
 .tg{color:var(--teal);font-weight:700}
 .tnum{width:26px;height:26px;border-radius:50%;background:var(--amber);color:#1b1206;border:2px solid #fff;font-weight:800;font-size:13px;display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,0,0,.5)}
+/* possession des lieux */
+.poi.own-me{box-shadow:0 0 0 3px rgba(0,0,0,.28),0 0 0 5px var(--teal),0 0 18px 2px rgba(79,224,181,.7)}
+.poi.own-rival{box-shadow:0 0 0 3px rgba(0,0,0,.28),0 0 0 5px var(--danger),0 0 18px 2px rgba(255,107,107,.65)}
+.poi.own-me::before,.poi.own-rival::before{content:'👑';position:absolute;top:-15px;right:-9px;font-size:13px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.poi.own-rival::before{content:'🏴'}
+.own{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.06);font-size:13.5px;line-height:1.35}
+.own .oe{flex:none;font-size:22px}
+.own .ob{flex:1;min-width:0}
+.own-hint{margin-top:3px;font-size:12px;color:var(--muted)}
+.dbar{height:6px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
+.dbar i{display:block;height:100%;border-radius:4px;background:var(--teal)}
+.dbar.mid i{background:var(--amber)}
+.dbar.low i{background:var(--danger)}
+.btn[disabled]{opacity:.4;pointer-events:none}
+.auth-err{min-height:18px;margin-top:8px;font-size:13px;color:#ff9c9c;text-align:left}
+.lb{margin-top:12px;display:flex;flex-direction:column;gap:6px;text-align:left}
+.lbr{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.06);font-weight:600}
+.lbr.me{outline:2px solid var(--teal)}
+.lbr .rk{flex:none;width:24px;text-align:center;color:var(--muted)}
+.lbr .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lbr .ct{color:var(--amber)}
 /* mise à jour disponible */
 #upd{position:fixed;left:10px;right:10px;top:calc(var(--st) + 8px);z-index:1300;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:var(--panel);border:1px solid var(--teal);box-shadow:0 12px 30px -10px rgba(0,0,0,.7);font-size:14px;font-weight:600;animation:up .28s ease-out}
 #upd span{flex:1}
@@ -325,6 +346,7 @@ textarea.fld{min-height:76px;resize:none}
 <div id="modal" class="hidden"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.min.js"></script>
 <script>
 (() => {
 'use strict';
@@ -958,12 +980,20 @@ const getPoi = id => P.items[id] || S.discovered[id] || (S.daily && S.daily.myst
 
 // ---------- marqueurs ----------
 const markers = new Map();
+// état partagé avec le serveur (comptes et propriétaires des lieux), voir « serveur » plus bas
+const Net = {user: null, pseudo: '', owned: new Map(), mine: [], ownedAt: 0};
+const SB_URL = 'https://wquxrieotxpetthiqeru.supabase.co';
+const SB_KEY = 'sb_publishable_9SQjxnzq_Cp5wUNlzLJQUg_Qxv_nqIK';   // clé publique, faite pour être dans l'app : la sécurité vient des règles côté serveur
+const CLAIM_RANGE = 45, PSEUDO_RE = /^[A-Za-z0-9_.-]{3,20}$/;
+const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY, {auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'brume.auth'}}) : null;
+let authMode = 'login', claiming = false;
+const ownCls = id => { const o = Net.owned.get(id); return o ? (Net.user && o.owner_id === Net.user.id ? 'own-me' : 'own-rival') : ''; };
 function poiState(p) { return S.discovered[p.id] ? 'f' : (cellOpen(p.lat, p.lng) ? 's' : 'm'); }
-function poiIcon(p, st, daily) {
+function poiIcon(p, st, daily, own) {
   const inner = st === 'm' ? '?' : (CATS[p.cat]?.e || '•');
   const sz = daily ? 40 : 34;
   return L.divIcon({className: '', iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
-    html: `<div class="poi ${st} r-${p.r}${daily ? ' daily' : ''}">${inner}</div>`});
+    html: `<div class="poi ${st} r-${p.r}${daily ? ' daily' : ''}${own ? ' ' + own : ''}">${inner}</div>`});
 }
 let mkTimer = 0;
 function refreshMarkers(now) {
@@ -981,22 +1011,23 @@ function refreshMarkers(now) {
     const st = poiState(p), daily = p.id === dm;
     const show = daily || (z >= 15) || (z >= 14 && (p.r !== 'common' || st === 'f')) || (z >= 13 && (p.r === 'legend' || st === 'f'));
     if (!show) continue;
-    cand.push({p, st, daily, dd: Math.abs(p.lat - c.lat) + Math.abs(p.lng - c.lng)});
+    cand.push({p, st, daily, own: ownCls(p.id), dd: Math.abs(p.lat - c.lat) + Math.abs(p.lng - c.lng)});
   }
   cand.sort((a, b2) => (b2.daily - a.daily) || a.dd - b2.dd);
   for (const o of cand.slice(0, 350)) want.set(o.p.id, o);
   for (const [id, m] of markers) if (!want.has(id)) { map.removeLayer(m.layer); markers.delete(id); }
   for (const [id, o] of want) {
-    const sig = o.st + (o.daily ? 'd' : '');
+    const sig = o.st + (o.daily ? 'd' : '') + o.own;
     const ex = markers.get(id);
-    if (ex) { if (ex.sig !== sig) { ex.layer.setIcon(poiIcon(o.p, o.st, o.daily)); ex.sig = sig; ex.layer.setZIndexOffset(o.daily ? 500 : 0); } continue; }
-    const layer = L.marker([o.p.lat, o.p.lng], {icon: poiIcon(o.p, o.st, o.daily), zIndexOffset: o.daily ? 500 : 0, keyboard: false})
+    if (ex) { if (ex.sig !== sig) { ex.layer.setIcon(poiIcon(o.p, o.st, o.daily, o.own)); ex.sig = sig; ex.layer.setZIndexOffset(o.daily ? 500 : 0); } continue; }
+    const layer = L.marker([o.p.lat, o.p.lng], {icon: poiIcon(o.p, o.st, o.daily, o.own), zIndexOffset: o.daily ? 500 : 0, keyboard: false})
       .on('click', () => openPoi(getPoi(id) || o.p)).addTo(map);
     markers.set(id, {layer, sig});
   }
 }
 map.on('moveend', () => {
   refreshMarkers(true);
+  fetchOwned(false);
   if (map.getZoom() >= 14) { const c = map.getCenter(); ensureTile(c.lat, c.lng); }
   if (!me) updateZoneChip();
 });
@@ -1251,6 +1282,7 @@ function openPoi(p) {
       <button class="pc-x" data-act="close-card" aria-label="Fermer">✕</button>
     </div>
     ${pre ? `<div class="pc-photo"><img src="${esc(p.img)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"><span>📷 Wikimedia · aperçu</span></div>` : ''}
+    ${st === 'f' && sb && /^[nwr]\d+$/.test(p.id) ? `<div class="own" id="ownBox">${ownInner(p)}</div>` : ''}
     <div class="pc-btns">
       ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
@@ -1262,6 +1294,7 @@ function openPoi(p) {
   if (st === 'f') paintCardIcon(p.id);
 }
 function updateCardMeta() {
+  refreshOwnBox();
   const el = $('#pcMeta'); if (!el || !selected) return;
   const p = selected, found = S.discovered[p.id];
   const dist = me ? fmtDist(hav(me.lat, me.lng, p.lat, p.lng)) + ' · ' : '';
@@ -1629,6 +1662,15 @@ function viewCollection() {
     }
     h += `</div>`;
   }
+  if (Net.user && Net.mine.length) {
+    h += `<div class="sec"><h3>Mes lieux possédés · ${Net.mine.length}</h3><div class="card list" style="padding:4px 12px">`;
+    for (const r of Net.mine) {
+      const d = Math.round(r.defense);
+      h += `<button class="it" data-act="goto-owned" data-id="${esc(r.id)}"><div class="emo">${CATS[r.cat]?.e || '👑'}</div><div class="grow">
+        <div class="ttl">${esc(r.name)}</div><div class="sub">Défense ${d} %${r.can_reinforce ? ' · <b style="color:var(--teal)">à renforcer</b>' : ''}</div></div></button>`;
+    }
+    h += `</div></div>`;
+  }
   const mine = Object.values(S.mine || {}).sort((a, b) => b.t - a.t);
   if (mine.length) {
     h += `<div class="sec"><h3>Mes points · ${mine.length}</h3><div class="card list" style="padding:4px 12px">`;
@@ -1649,6 +1691,7 @@ function viewProfil() {
       <div class="stat"><b>${area.toFixed(area < 10 ? 2 : 1).replace('.', ',')}</b><span>km² explorés</span></div>
       <div class="stat"><b>${(S.stats.dist / 1000).toFixed(1).replace('.', ',')}</b><span>km parcourus</span></div>
       <div class="stat"><b>${nFound()}</b><span>lieux découverts</span></div></div></div>`;
+  h += viewAccount();
   h += viewAvatar();
   h += `<div class="sec"><h3>Zones explorées</h3>`;
   const zs = Z.list.filter(z => z.count > 0).sort((x, y) => zonePct(y) - zonePct(x));
@@ -1925,6 +1968,18 @@ document.addEventListener('click', e => {
   else if (a === 'tour-go') startTour();
   else if (a === 'tour-rm') { S.tour = S.tour.filter(t => t.id !== id); tourMeta = null; updateTourBtn(); scheduleSave(); if (S.tour.length) openTour(); else closeModal(); }
   else if (a === 'tour-clear') { S.tour = []; tourMeta = null; clearRoute(); updateTourBtn(); scheduleSave(); closeModal(); }
+  else if (a === 'auth-open') authForm('login');
+  else if (a === 'auth-switch') { const keep = {email: ($('#aEmail') || {}).value, pseudo: ($('#aPseudo') || {}).value}; authForm(authMode === 'login' ? 'signup' : 'login', keep); }
+  else if (a === 'auth-submit') authSubmit();
+  else if (a === 'pseudo-open') pseudoForm();
+  else if (a === 'pseudo-submit') pseudoSubmit();
+  else if (a === 'signout') signOutNow();
+  else if (a === 'delete-account') modal(`<div class="bige">🗑️</div><h2>Supprimer ton compte ?</h2><p>Ton pseudo et ton historique seront supprimés, et tes lieux redeviendront libres. Cette action est définitive.</p>
+      <div class="btns"><button class="btn danger" data-act="delete-account-yes">Supprimer mon compte</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+  else if (a === 'delete-account-yes') deleteAccount();
+  else if (a === 'leaderboard') openLeaderboard();
+  else if (a === 'claim') claimSelected();
+  else if (a === 'goto-owned') { const r = Net.mine.find(x => x.id === id); if (r) { const p = getPoi(id) || poiFromRow(r); closeSheet(); follow = false; map.setView([p.lat, p.lng], Math.max(map.getZoom(), 16)); setTimeout(() => { refreshMarkers(true); openPoi(p); }, 350); } }
   else if (a === 'update') { saveNow(); location.replace(location.pathname + '?v=' + Date.now()); }
   else if (a.startsWith('av-')) setAvatar(a.slice(3), el.dataset.v, +el.dataset.lv || 1);
   else if (a === 'gallery') openGallery(id);
@@ -1951,13 +2006,14 @@ document.addEventListener('click', e => {
   else if (a === 'import') importBox();
   else if (a === 'do-import') doImport();
   else if (a === 'copy') { try { navigator.clipboard.writeText($('#ioTxt').value).then(() => toast('📋', 'Sauvegarde copiée.', '')); } catch (err) { $('#ioTxt').select(); } }
-  else if (a === 'reset') modal(`<div class="bige">⚠️</div><h2>Tout effacer ?</h2><p>Ta carte, ton XP, ta collection et tes succès seront supprimés de ce navigateur. C’est définitif.</p>
+  else if (a === 'reset') modal(`<div class="bige">⚠️</div><h2>Tout effacer ?</h2><p>Ta carte, ton XP, ta collection et tes succès seront supprimés de ce navigateur, et tu seras déconnecté. Ton compte et tes lieux possédés restent sur le serveur. C’est définitif pour ce navigateur.</p>
       <div class="btns"><button class="btn danger" data-act="reset-yes">Oui, tout effacer</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
   else if (a === 'reset-yes') {
     resetting = true; window.__brumeReset = true; clearTimeout(saveTimer); saveTimer = 0;
     stopSim(); if (watchId != null) navigator.geolocation.clearWatch(watchId);
     ['brume.state', 'brume.cells', 'brume.zones', 'brume.pois', 'brume.pois2'].forEach(k => LS.del(k));
-    wipePhotos().then(() => location.reload());
+    const lo = sb ? Promise.race([sb.auth.signOut({scope: 'local'}).catch(() => {}), new Promise(r => setTimeout(r, 2000))]) : Promise.resolve();
+    lo.then(() => wipePhotos()).then(() => { Object.keys(localStorage).filter(k => k.startsWith('brume.auth')).forEach(k => LS.del(k)); location.reload(); });
   }
   else if (a === 'modal-close') closeModal();
   else if (a === 'start') { closeModal(); S.onboarded = true; S.demo = false; startExplore(); }
@@ -1965,7 +2021,7 @@ document.addEventListener('click', e => {
 });
 
 // ---------- démarrage ----------
-renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true); renderMine(); updateTourBtn();
+renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true); renderMine(); updateTourBtn(); netInit();
 if (!S.onboarded) {
   modal(`<div class="logo"></div><h2>Brume</h2><p>Le monde est couvert de brume. Marche pour la dissiper, découvre les lieux cachés et monte en niveau.</p>
     <ul class="tips">
@@ -1979,8 +2035,210 @@ if (S.lastPos) { ensurePoisAround(S.lastPos[0], S.lastPos[1]); }
 setInterval(() => { renderHud(); }, 60000);
 
 // accès pour les tests
+// ---------- serveur : comptes et possession des lieux (Supabase) ----------
+// (la connexion `sb` et l'état `Net` sont déclarés plus haut, avant les marqueurs : ils servent dès le démarrage)
+const CLAIM_ERR = {
+  not_signed_in: 'Connecte-toi d’abord.', no_profile: 'Choisis d’abord un pseudo.', bad_place: 'Ce lieu ne peut pas être pris.',
+  bad_position: 'Position invalide.', accuracy: 'Signal GPS trop imprécis (±40 m maximum). Patiente un instant.',
+  rate_limit: 'Trop d’actions à la suite : réessaie dans un moment.', too_far: `Tu es trop loin du lieu (${CLAIM_RANGE} m maximum).`,
+  too_fast: 'Tu t’es déplacé trop vite depuis ta dernière action.', cooldown: 'Tu as déjà attaqué ce lieu aujourd’hui : reviens demain.'
+};
+const poiFromRow = r => ({id: r.id, name: r.name, lat: r.lat, lng: r.lng, cat: r.cat || '', r: r.rarity || 'common', big: false});
+function mapAuthErr(e) {
+  const m = String((e && e.message) || e || '');
+  if (/invalid login/i.test(m)) return 'E-mail ou mot de passe incorrect.';
+  if (/already registered|already been registered/i.test(m)) return 'Un compte existe déjà avec cet e-mail : connecte-toi.';
+  if (/password/i.test(m) && /(weak|short|least|should)/i.test(m)) return 'Mot de passe trop faible (8 caractères minimum).';
+  if (/rate limit|too many/i.test(m)) return 'Trop d’essais : patiente un instant.';
+  if (/valid email|invalid email/i.test(m)) return 'E-mail invalide.';
+  return 'Erreur : ' + m;
+}
+async function loadProfile() {
+  Net.pseudo = '';
+  if (!sb || !Net.user) return;
+  const {data} = await sb.from('profiles').select('pseudo').eq('id', Net.user.id).maybeSingle();
+  Net.pseudo = (data && data.pseudo) || '';
+}
+async function loadMine() {
+  Net.mine = [];
+  if (!sb || !Net.user || !Net.pseudo) return;
+  const {data, error} = await sb.rpc('my_places');
+  if (!error && Array.isArray(data)) Net.mine = data;
+}
+async function fetchOwned(force) {
+  if (!sb || map.getZoom() < 13) return;
+  const now = Date.now(); if (!force && now - Net.ownedAt < 8000) return; Net.ownedAt = now;
+  try {
+    const b = map.getBounds().pad(0.3);
+    const {data, error} = await sb.rpc('places_in_bounds', {s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast()});
+    if (error || !Array.isArray(data)) return;
+    const ids = new Set(data.map(r => r.id));
+    for (const [id, o] of Net.owned) if (!ids.has(id) && b.contains([o.lat, o.lng])) Net.owned.delete(id);
+    for (const r of data) Net.owned.set(r.id, r);
+    refreshMarkers(true); refreshOwnBox();
+  } catch (e) {}
+}
+async function netInit() {
+  if (!sb) return;
+  try {
+    const {data} = await sb.auth.getSession();
+    Net.user = (data.session && data.session.user) || null;
+    sb.auth.onAuthStateChange((ev, session) => { setTimeout(() => { Net.user = (session && session.user) || null; if (!Net.user) { Net.pseudo = ''; Net.mine = []; } }, 0); });
+    if (Net.user) { await loadProfile(); await loadMine(); }
+    fetchOwned(true); refreshOwnBox();
+  } catch (e) { console.warn('[brume] serveur', e); }
+}
+// carte d'un lieu : qui le tient, et que peut-on faire
+function ownInner(p) {
+  const o = Net.owned.get(p.id), uid = Net.user && Net.user.id, isMine = !!(o && uid && o.owner_id === uid);
+  let txt, hint = '', btn = '', bar = '';
+  if (o) {
+    const d = Math.round(o.defense), cls = d < 30 ? 'low' : d < 60 ? 'mid' : '';
+    txt = (isMine ? '<b>Ce lieu est à toi</b>' : `Tenu par <b>${esc(o.owner)}</b>`) + ` · défense ${d} %`;
+    bar = `<div class="dbar ${cls}"><i style="width:${d}%"></i></div>`;
+  } else txt = 'Aucun propriétaire pour l’instant';
+  if (S.demo) hint = 'La prise de lieu est désactivée en mode démo.';
+  else if (!Net.user) { btn = '<button class="btn sm primary" data-act="auth-open">Se connecter</button>'; hint = 'Connecte-toi pour posséder des lieux.'; }
+  else if (!Net.pseudo) btn = '<button class="btn sm primary" data-act="pseudo-open">Choisir un pseudo</button>';
+  else {
+    const near = !!me && (me.acc || 0) <= 40 && hav(me.lat, me.lng, p.lat, p.lng) <= CLAIM_RANGE;
+    btn = `<button class="btn sm primary" data-act="claim" ${near && !claiming ? '' : 'disabled'}>${isMine ? '🛡️ Renforcer' : o ? '⚔️ Attaquer' : '👑 Prendre'}</button>`;
+    if (!near) hint = `${me ? 'Rends-toi' : 'Lance l’exploration et rends-toi'} à moins de ${CLAIM_RANGE} m du lieu (GPS ±40 m max) pour agir.`;
+  }
+  return `<span class="oe">${isMine ? '👑' : o ? '🏴' : '🏳️'}</span><div class="ob">${txt}${bar}${hint ? `<div class="own-hint">${hint}</div>` : ''}</div>${btn}`;
+}
+function refreshOwnBox() { const b = $('#ownBox'); if (b && selected) b.innerHTML = ownInner(selected); }
+async function claimSelected() {
+  const p = selected;
+  if (!p || !sb || !Net.user || claiming) return;
+  if (S.demo || !me) { toast('📍', 'Il faut une vraie position GPS pour agir.', 'err'); return; }
+  claiming = true; refreshOwnBox();
+  try {
+    const {data: r, error} = await sb.rpc('claim_place', {
+      p_id: p.id, p_name: p.name, p_lat: p.lat, p_lng: p.lng, p_cat: p.cat || '', p_rarity: p.r || 'common',
+      u_lat: me.lat, u_lng: me.lng, u_acc: me.acc || 0
+    });
+    if (error || !r) { toast('⚠️', 'Serveur injoignable : réessaie.', 'err'); return; }
+    if (!r.ok) {
+      const hrs = r.next_at ? Math.max(1, Math.ceil((new Date(r.next_at) - Date.now()) / 36e5)) : 0;
+      toast('🚫', r.error === 'already_reinforced' ? `Déjà renforcé : reviens dans ${hrs} h.` : (CLAIM_ERR[r.error] || 'Action refusée.'), 'err', 4500);
+      return;
+    }
+    const name = esc(p.name);
+    if (r.result === 'claimed') { toast('👑', `Tu possèdes maintenant <b>${name}</b> !`, 'gold', 4500); addXp(60); }
+    else if (r.result === 'reinforced') { toast('🛡️', `<b>${name}</b> : défense remise à 100 %.`, '', 4000); addXp(20); }
+    else if (r.result === 'attacked') { toast('⚔️', `Attaque réussie : la défense de <b>${esc(r.owner)}</b> tombe à ${Math.round(r.defense)} %.`, 'rare', 4500); addXp(15); }
+    else if (r.result === 'captured') { toast('👑', `Tu prends <b>${name}</b> à <b>${esc(r.previous_owner || '')}</b> !`, 'legend', 5000); addXp(120); }
+    scheduleSave();
+    await Promise.all([fetchOwned(true), loadMine()]);
+  } catch (e) { toast('⚠️', 'Serveur injoignable : réessaie.', 'err'); }
+  finally { claiming = false; refreshOwnBox(); }
+}
+// compte : connexion, création, pseudo
+function authForm(mode, keep) {
+  authMode = mode; const signup = mode === 'signup';
+  modal(`<h2>${signup ? 'Créer un compte' : 'Se connecter'}</h2>
+    <p>${signup ? 'Un compte te permet de posséder des lieux et de les retrouver sur tous tes appareils.' : 'Retrouve tes lieux et ton pseudo.'}</p>
+    <input class="fld" id="aEmail" type="email" autocomplete="email" inputmode="email" autocapitalize="off" placeholder="E-mail" value="${esc((keep && keep.email) || '')}">
+    <input class="fld" id="aPass" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" placeholder="Mot de passe (8 caractères minimum)">
+    ${signup ? `<input class="fld" id="aPseudo" maxlength="20" autocapitalize="off" autocomplete="off" placeholder="Pseudo public (lettres, chiffres, _ . -)" value="${esc((keep && keep.pseudo) || '')}">` : ''}
+    <div class="auth-err" id="aErr"></div>
+    <div class="btns"><button class="btn primary" data-act="auth-submit">${signup ? 'Créer mon compte' : 'Se connecter'}</button>
+      <button class="btn" data-act="auth-switch">${signup ? 'J’ai déjà un compte' : 'Créer un compte'}</button>
+      <button class="btn" data-act="modal-close">Annuler</button></div>`);
+}
+function pseudoForm(msg) {
+  modal(`<h2>Choisis ton pseudo</h2><p>Il sera visible par les autres joueurs quand tu possèdes un lieu.</p>
+    <input class="fld" id="pPseudo" maxlength="20" autocapitalize="off" autocomplete="off" placeholder="Pseudo (lettres, chiffres, _ . -)">
+    <div class="auth-err" id="pErr">${esc(msg || '')}</div>
+    <div class="btns"><button class="btn primary" data-act="pseudo-submit">Valider</button><button class="btn" data-act="modal-close">Plus tard</button></div>`);
+}
+async function createProfile(pseudo) {
+  const {error} = await sb.from('profiles').insert({id: Net.user.id, pseudo});
+  if (error) { if (error.code === '23505') { pseudoForm('Ce pseudo est déjà pris : choisis-en un autre.'); return false; } throw error; }
+  Net.pseudo = pseudo; return true;
+}
+async function afterAuth() {
+  closeModal(); await loadMine(); fetchOwned(true);
+  toast('✅', `Connecté en tant que <b>${esc(Net.pseudo)}</b>.`, '');
+  if (tab === 'profil' || tab === 'collection') { const sbd = $('#sheetBody'), st = sbd.scrollTop; renderSheet(); sbd.scrollTop = st; }
+  refreshOwnBox();
+}
+async function authSubmit() {
+  const email = ($('#aEmail').value || '').trim(), pass = $('#aPass').value || '', signup = authMode === 'signup';
+  const pseudo = signup ? ($('#aPseudo').value || '').trim() : '';
+  const err = m => { const e = $('#aErr'); if (e) e.textContent = m; };
+  if (!/^\S+@\S+\.\S+$/.test(email)) return err('E-mail invalide.');
+  if (pass.length < 8) return err('Mot de passe : 8 caractères minimum.');
+  if (signup && !PSEUDO_RE.test(pseudo)) return err('Pseudo : 3 à 20 caractères (lettres, chiffres, _ . -).');
+  err('…');
+  try {
+    if (signup) {
+      const {data, error} = await sb.auth.signUp({email, password: pass});
+      if (error) return err(mapAuthErr(error));
+      if (!data.session) return err('Un compte existe peut-être déjà avec cet e-mail : essaie de te connecter.');
+      Net.user = data.user;
+      if (!(await createProfile(pseudo))) return;
+    } else {
+      const {data, error} = await sb.auth.signInWithPassword({email, password: pass});
+      if (error) return err(mapAuthErr(error));
+      Net.user = data.user; await loadProfile();
+      if (!Net.pseudo) { pseudoForm(); return; }
+    }
+    await afterAuth();
+  } catch (e) { err('Serveur injoignable : vérifie ta connexion.'); }
+}
+async function pseudoSubmit() {
+  const pseudo = ($('#pPseudo').value || '').trim(), err = m => { const e = $('#pErr'); if (e) e.textContent = m; };
+  if (!Net.user) return err('Connecte-toi d’abord.');
+  if (!PSEUDO_RE.test(pseudo)) return err('Pseudo : 3 à 20 caractères (lettres, chiffres, _ . -).');
+  try { if (await createProfile(pseudo)) await afterAuth(); } catch (e) { err('Serveur injoignable : réessaie.'); }
+}
+async function signOutNow() {
+  try { await sb.auth.signOut(); } catch (e) {}
+  Net.user = null; Net.pseudo = ''; Net.mine = []; refreshMarkers(true); refreshOwnBox();
+  toast('👋', 'Tu es déconnecté.', '');
+  if (tab === 'profil' || tab === 'collection') renderSheet();
+}
+async function deleteAccount() {
+  closeModal();
+  try {
+    const {error} = await sb.rpc('delete_account'); if (error) throw error;
+    try { await sb.auth.signOut(); } catch (e) {}
+    Net.user = null; Net.pseudo = ''; Net.mine = []; Net.owned.clear(); fetchOwned(true);
+    toast('🗑️', 'Ton compte a été supprimé.', '');
+    if (tab === 'profil' || tab === 'collection') renderSheet();
+  } catch (e) { toast('⚠️', 'Suppression impossible pour l’instant : réessaie.', 'err'); }
+}
+async function openLeaderboard() {
+  if (!sb) return;
+  let rows;
+  try { const {data, error} = await sb.rpc('leaderboard'); if (error) throw error; rows = data || []; }
+  catch (e) { toast('⚠️', 'Classement indisponible pour l’instant.', 'err'); return; }
+  const list = rows.length ? rows.map((r, i) => `<div class="lbr ${r.pseudo === Net.pseudo ? 'me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${esc(r.pseudo)}</span><span class="ct">👑 ${r.places}</span></div>`).join('')
+    : '<div class="empty">Personne ne possède de lieu pour l’instant : sois le premier !</div>';
+  modal(`<h2>🏆 Classement</h2><p>Les joueurs qui possèdent le plus de lieux.</p><div class="lb">${list}</div>
+    <div class="btns"><button class="btn" data-act="modal-close">Fermer</button></div>`);
+}
+function viewAccount() {
+  let h = `<div class="sec"><h3>Compte</h3><div class="card">`;
+  if (!sb) h += `<div class="ttl">Serveur indisponible</div><div class="sub">Impossible de joindre le serveur pour le moment : la possession de lieux est désactivée.</div>`;
+  else if (!Net.user) h += `<div class="ttl">👑 Possède des lieux</div><div class="sub">Crée un compte pour prendre des lieux, les défendre et défier d’autres joueurs.</div>
+    <div class="pc-btns"><button class="btn sm primary" data-act="auth-open">Se connecter</button><button class="btn sm" data-act="leaderboard">🏆 Classement</button></div>`;
+  else h += `<div class="ttl">${Net.pseudo ? esc(Net.pseudo) : 'Pseudo à choisir'}</div><div class="sub">${esc(Net.user.email || '')} · ${Net.mine.length} lieu${Net.mine.length > 1 ? 'x' : ''} possédé${Net.mine.length > 1 ? 's' : ''}</div>
+    <div class="pc-btns">${Net.pseudo ? '' : '<button class="btn sm primary" data-act="pseudo-open">Choisir un pseudo</button>'}<button class="btn sm" data-act="leaderboard">🏆 Classement</button><button class="btn sm" data-act="signout">Déconnexion</button></div>
+    <div class="pc-btns"><button class="btn sm danger" data-act="delete-account">Supprimer mon compte</button></div>`;
+  return h + `</div></div>`;
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target || !e.target.id) return;
+  if (e.target.id === 'aEmail' || e.target.id === 'aPass' || e.target.id === 'aPseudo') authSubmit();
+  else if (e.target.id === 'pPseudo') pseudoSubmit();
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchOwned(true); });
+
 // ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
-const BUILD = '2026-11-24.3';   // à changer à chaque nouvelle version publiée
+const BUILD = '2026-11-24.4';   // à changer à chaque nouvelle version publiée
 let updAsked = 0;
 async function checkUpdate() {
   if (updAsked || $('#upd') || document.hidden) return;
@@ -1998,7 +2256,7 @@ async function checkUpdate() {
 setTimeout(checkUpdate, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
-window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder};
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder, Net, sb, fetchOwned, ownInner};
 })();
 </script>
 </body>
