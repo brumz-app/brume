@@ -66,6 +66,14 @@ create policy claim_log_read on public.claim_log for select using (user_id = aut
 
 revoke insert, update, delete on public.places, public.claim_log from anon, authenticated;
 
+-- droits explicites (Supabase n'en accorde plus automatiquement aux nouvelles tables)
+grant usage on schema public to anon, authenticated;
+grant select on public.profiles to anon, authenticated;
+grant insert, update, delete on public.profiles to authenticated;
+grant select on public.places to anon, authenticated;
+grant select on public.claim_log to authenticated;
+grant usage, select on sequence public.claim_log_id_seq to authenticated;
+
 -- ---------- règles du jeu ----------
 create or replace function public.dist_m(lat1 double precision, lng1 double precision, lat2 double precision, lng2 double precision)
 returns double precision language sql immutable as $$
