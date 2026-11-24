@@ -252,6 +252,12 @@ textarea.fld{min-height:76px;resize:none}
 .gt.main::after{content:'⭐';position:absolute;top:3px;right:4px;font-size:14px}
 .gbig{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000;margin-top:8px}
 .mbox label.btn{cursor:pointer}
+.pc-photo{position:relative;margin-top:10px;height:150px;border-radius:14px;overflow:hidden;background:#0c1018}
+.pc-photo img{display:block;width:100%;height:100%;object-fit:cover}
+.pc-photo span{position:absolute;left:8px;bottom:6px;padding:2px 8px;border-radius:8px;background:rgba(8,12,20,.7);font-size:11px;font-weight:600;color:#cfd5e2}
+/* mise à jour disponible */
+#upd{position:fixed;left:10px;right:10px;top:calc(var(--st) + 8px);z-index:1300;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:var(--panel);border:1px solid var(--teal);box-shadow:0 12px 30px -10px rgba(0,0,0,.7);font-size:14px;font-weight:600;animation:up .28s ease-out}
+#upd span{flex:1}
 </style>
 </head>
 <body>
@@ -1211,20 +1217,23 @@ function openPoi(p) {
   selected = p; closeSheet();
   const st = poiState(p), d = getDaily(), daily = d.mystery && d.mystery.id === p.id;
   const mys = st === 'm';
-  const icon = mys ? '?' : (CATS[p.cat]?.e || '•');
-  const kick = (daily ? 'Mystère du jour · ' : '') + (mys ? 'Lieu mystère' : CATS[p.cat]?.label || 'Lieu');
+  const pre = mys && !daily && !!p.img && isPremium();   // aperçu premium : photo + nom avant d'y aller (le mystère du jour reste caché)
+  const hide = mys && !pre;
+  const icon = hide ? '?' : (CATS[p.cat]?.e || '•');
+  const kick = (daily ? 'Mystère du jour · ' : '') + (pre ? 'Aperçu · ' + (CATS[p.cat]?.label || 'Lieu') : mys ? 'Lieu mystère' : CATS[p.cat]?.label || 'Lieu');
   const gm = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=walking`;
   const card = $('#card');
   card.innerHTML = `<div class="pc-top">
       <div class="pc-ic r-${p.r}" id="pcIc">${icon}</div>
       <div class="pc-main">
         <div class="pc-k">${esc(kick)} · <span class="rar r-${p.r}">${RAR[p.r].label}</span></div>
-        <div class="pc-n">${mys ? 'Approche-toi pour le révéler' : esc(p.name)}</div>
-        ${!mys && p.sub ? `<div class="pc-s">${esc(p.sub)}</div>` : ''}
+        <div class="pc-n">${hide ? 'Approche-toi pour le révéler' : esc(p.name)}</div>
+        ${!hide && p.sub ? `<div class="pc-s">${esc(p.sub)}</div>` : ''}
         <div class="pc-meta" id="pcMeta"></div>
       </div>
       <button class="pc-x" data-act="close-card" aria-label="Fermer">✕</button>
     </div>
+    ${pre ? `<div class="pc-photo"><img src="${esc(p.img)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"><span>📷 Wikimedia · aperçu</span></div>` : ''}
     <div class="pc-btns">
       ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
@@ -1743,6 +1752,7 @@ document.addEventListener('click', e => {
   else if (a === 'route') { const p = getPoi(id); closeSheet(); if (p) routeTo(p); }
   else if (a === 'clear-route') clearRoute();
   else if (a === 'show-card') showCard(id, false);
+  else if (a === 'update') { saveNow(); location.replace(location.pathname + '?v=' + Date.now()); }
   else if (a.startsWith('av-')) setAvatar(a.slice(3), el.dataset.v, +el.dataset.lv || 1);
   else if (a === 'gallery') openGallery(id);
   else if (a === 'photo-open') viewPhoto(id);
@@ -1796,7 +1806,26 @@ if (S.lastPos) { ensurePoisAround(S.lastPos[0], S.lastPos[1]); }
 setInterval(() => { renderHud(); }, 60000);
 
 // accès pour les tests
-window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf};
+// ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
+const BUILD = '2026-11-24.2';   // à changer à chaque nouvelle version publiée
+let updAsked = 0;
+async function checkUpdate() {
+  if (updAsked || $('#upd') || document.hidden) return;
+  updAsked = 1; setTimeout(() => { updAsked = 0; }, 60000);
+  try {
+    const r = await fetchT(location.pathname + '?cb=' + Date.now(), {cache: 'no-store'}, 15000);
+    if (!r.ok) return;
+    const m = new RegExp("const BUILD = '([\\w.-]+)'").exec(await r.text());
+    if (!m || m[1] === BUILD) return;
+    const b = document.createElement('div'); b.id = 'upd';
+    b.innerHTML = '<span>✨ Nouvelle version de Brume disponible</span><button class="btn primary sm" data-act="update">Mettre à jour</button>';
+    document.body.appendChild(b);
+  } catch (e) {}
+}
+setTimeout(checkUpdate, 3000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate};
 })();
 </script>
 </body>
