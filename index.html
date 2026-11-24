@@ -209,6 +209,24 @@ textarea{width:100%;min-height:120px;margin-top:10px;padding:10px;border-radius:
 .tcg-info{font-size:12px;color:var(--muted);margin-top:6px}
 .tcg-foot{display:flex;justify-content:space-between;margin-top:8px;padding-top:7px;border-top:1px solid var(--line);font-size:12px;font-weight:700;color:var(--c)}
 @media (prefers-reduced-motion:reduce){.tcg,.tcg::after{animation:none}}
+/* ---------- premium : points perso & photos ---------- */
+#map{-webkit-touch-callout:none}
+#addBtn{bottom:calc(var(--tabs) + var(--sb) + 76px);font-size:22px;line-height:1}
+#locBtn.hidden ~ #addBtn{display:none}
+.poi.mine{--c:var(--teal);background:radial-gradient(circle at 35% 30%,#1d3b45,#10202a);font-size:18px}
+.pc-ic.ph{background-size:cover;background-position:center;font-size:0}
+.fld{display:block;width:100%;min-height:0;margin-top:10px;padding:12px 14px;border-radius:14px;background:#0c1018;color:var(--text);border:1px solid var(--line);font-family:inherit;font-size:16px;line-height:1.4;text-align:left;-webkit-user-select:text;user-select:text}
+textarea.fld{min-height:76px;resize:none}
+.emopick{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:12px}
+.emopick button{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.07);font-size:20px}
+.emopick button.on{background:rgba(79,224,181,.25);outline:2px solid var(--teal)}
+.mbox:not(:has(.tcg)){max-height:90vh;overflow-y:auto}
+.gal{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:12px}
+.gt{position:relative;aspect-ratio:1;border-radius:12px;background-size:cover;background-position:center;background-color:#0c1018}
+.gt.main{outline:2px solid var(--amber)}
+.gt.main::after{content:'⭐';position:absolute;top:3px;right:4px;font-size:14px}
+.gbig{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000;margin-top:8px}
+.mbox label.btn{cursor:pointer}
 </style>
 </head>
 <body>
@@ -234,6 +252,8 @@ textarea{width:100%;min-height:120px;margin-top:10px;padding:10px;border-radius:
 <button class="fab" id="locBtn" aria-label="Me recentrer">
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
 </button>
+
+<button class="fab" id="addBtn" data-act="mine-add" aria-label="Ajouter un point perso">📍</button>
 
 <div id="explore">
   <button id="exploreBtn"><span class="dot"></span><span id="exploreLabel">Explorer</span></button>
@@ -338,7 +358,8 @@ const parse = (s, d) => { try { return s ? JSON.parse(s) : d; } catch (e) { retu
 const defaultState = () => ({
   v: 1, xp: 0, discovered: {}, daily: null, streak: {count: 0, best: 0, last: null},
   badges: {}, flags: {}, stats: {dist: 0, since: Date.now()}, lastPos: null,
-  autoStart: false, demo: false, onboarded: false
+  autoStart: false, demo: false, onboarded: false,
+  mine: {}, photoMain: {}
 });
 let S = Object.assign(defaultState(), parse(LS.get('brume.state'), {}));
 const P = Object.assign({tiles: {}, items: {}}, parse(LS.get('brume.pois2'), {}));
@@ -527,7 +548,7 @@ function toast(icon, html, kind = '', ms = 3400) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 320); }, ms);
 }
 function modal(html) { const m = $('#modal'); m.innerHTML = `<div class="mbox">${html}</div>`; m.classList.remove('hidden'); }
-function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; setTimeout(pumpCards, 350); }
+function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; revokeGal(); setTimeout(pumpCards, 350); }
 
 // ---------- cartes à collectionner ----------
 const CAT_HUE = {temple: 330, sanctuaire: 5, eglise: 215, culte: 190, vue: 30, musee: 265, parc: 140, patrimoine: 40, attraction: 300};
@@ -552,6 +573,7 @@ function showCard(id, fresh) {
       </div>
     </div>
     <div class="btns"><button class="btn primary" data-act="modal-close">${fresh ? 'Ajouter à ma collection' : 'Fermer'}</button></div>`);
+  applyMainPhoto(id);
 }
 function pumpCards() {
   if (!cardQueue.length || !$('#modal').classList.contains('hidden')) return;
@@ -1082,7 +1104,7 @@ function openPoi(p) {
   const gm = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=walking`;
   const card = $('#card');
   card.innerHTML = `<div class="pc-top">
-      <div class="pc-ic r-${p.r}">${icon}</div>
+      <div class="pc-ic r-${p.r}" id="pcIc">${icon}</div>
       <div class="pc-main">
         <div class="pc-k">${esc(kick)} · <span class="rar r-${p.r}">${RAR[p.r].label}</span></div>
         <div class="pc-n">${mys ? 'Approche-toi pour le révéler' : esc(p.name)}</div>
@@ -1094,10 +1116,12 @@ function openPoi(p) {
     <div class="pc-btns">
       ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
-    </div>`;
+    </div>
+    ${st === 'f' ? `<div class="pc-btns"><button class="btn" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button></div>` : ''}`;
   card.classList.remove('hidden');
   $('#explore').classList.add('hidden'); $('#locBtn').classList.add('hidden');
   updateCardMeta();
+  if (st === 'f') paintCardIcon(p.id);
 }
 function updateCardMeta() {
   const el = $('#pcMeta'); if (!el || !selected) return;
@@ -1229,6 +1253,7 @@ map.on('dragstart', () => { follow = false; });
 let sim = null;
 function stopSim() { if (sim) { clearInterval(sim.timer); sim = null; } }
 map.on('click', e => {
+  if (lpFired) { lpFired = false; return; }   // le clic qui suit un appui long ne doit rien faire
   if (S.demo && exploring) {
     const from = me ? [me.lat, me.lng] : [e.latlng.lat, e.latlng.lng];
     stopSim();
@@ -1316,6 +1341,13 @@ function viewCollection() {
     }
     h += `</div>`;
   }
+  const mine = Object.values(S.mine || {}).sort((a, b) => b.t - a.t);
+  if (mine.length) {
+    h += `<div class="sec"><h3>Mes points · ${mine.length}</h3><div class="card list" style="padding:4px 12px">`;
+    for (const p of mine) h += `<button class="it" data-act="goto" data-id="${esc(p.id)}"><div class="emo">${esc(p.e || '📍')}</div><div class="grow">
+        <div class="ttl">${esc(p.name)}</div><div class="sub">Privé · ${new Date(p.t).toLocaleDateString('fr-FR', {day: 'numeric', month: 'short'})}</div></div></button>`;
+    h += `</div></div>`;
+  }
   return h + `</div>`;
 }
 function viewProfil() {
@@ -1348,10 +1380,13 @@ function viewProfil() {
     else h += `<div class="bdg ${got ? 'got' : 'lock'}"><div class="e">${bd.e}</div><div class="n">${esc(bd.n)}</div><div class="d">${esc(bd.d)}</div></div>`;
   }
   h += `</div></div>`;
+  h += `<div class="sec"><h3>Premium</h3>
+    <div class="card"><div class="ttl">✨ Brume Premium · offert pendant les tests</div>
+      <div class="sub">Points perso privés (touche 📍 ou appui long sur la carte) · galerie de photos sur chaque lieu · photo principale de ta carte à collectionner.</div></div></div>`;
   h += `<div class="sec"><h3>Réglages</h3>
     <div class="card"><div class="row"><div class="grow"><div class="ttl">Mode démo</div><div class="sub">Touche la carte pour te déplacer sans GPS. Les progrès comptent : à utiliser pour tester.</div></div>
       <button class="switch ${S.demo ? 'on' : ''}" data-act="demo" aria-label="Mode démo"></button></div></div>
-    <div class="card"><div class="ttl">Sauvegarde</div><div class="sub">Tout est enregistré dans ce navigateur. Exporte de temps en temps pour ne rien perdre.</div>
+    <div class="card"><div class="ttl">Sauvegarde</div><div class="sub">Tout est enregistré dans ce navigateur. Exporte de temps en temps pour ne rien perdre. Tes photos restent sur cet appareil : elles ne sont pas incluses dans l’export.</div>
       <div class="pc-btns"><button class="btn sm" data-act="export">Exporter</button><button class="btn sm" data-act="import">Importer</button><button class="btn sm danger" data-act="reset">Tout effacer</button></div>
       <div id="ioBox"></div></div>
     <p class="note">Carte © OpenStreetMap et CARTO · lieux : OpenStreetMap (Overpass) · quartiers : Nominatim · itinéraires : OSRM.</p></div>`;
@@ -1380,6 +1415,211 @@ function doImport() {
   location.reload();
 }
 
+// ---------- premium (offert pendant les tests) ----------
+const PREMIUM_FREE = true;
+const isPremium = () => PREMIUM_FREE || S.premium === true;
+function needPremium() {
+  if (isPremium()) return true;
+  modal(`<div class="bige">✨</div><h2>Fonction Premium</h2><p>Les points perso et les photos font partie de Brume Premium.</p>
+    <div class="btns"><button class="btn" data-act="modal-close">Fermer</button></div>`);
+  return false;
+}
+
+// ---------- mes points (privés, stockés sur cet appareil) ----------
+const MINE_EMOJIS = ['📍', '⭐', '❤️', '🏠', '☕', '🍜', '🌅', '🏞️', '🎨', '📚', '🎵', '🐾'];
+const mineLayer = L.layerGroup().addTo(map);
+let mineDraft = null, lp = null, lpFired = false, cardUrl = '';
+function renderMine() {
+  mineLayer.clearLayers();
+  for (const p of Object.values(S.mine || {})) {
+    L.marker([p.lat, p.lng], {keyboard: false, icon: L.divIcon({className: '', iconSize: [34, 34], iconAnchor: [17, 17], html: `<div class="poi mine">${esc(p.e || '📍')}</div>`})})
+      .on('click', () => openMine(p.id)).addTo(mineLayer);
+  }
+}
+function newMineAt(lat, lng) { if (needPremium()) mineForm({e: '📍', lat, lng}); }
+function mineForm(draft) {
+  mineDraft = draft;
+  modal(`<h2>${draft.id ? 'Modifier le point' : 'Nouveau point'}</h2><p>Visible uniquement par toi.</p>
+    <div class="emopick">${MINE_EMOJIS.map(x => `<button type="button" class="${x === draft.e ? 'on' : ''}" data-act="mine-emoji" data-e="${x}">${x}</button>`).join('')}</div>
+    <input class="fld" id="mineName" maxlength="40" placeholder="Nom du point" value="${esc(draft.name || '')}">
+    <textarea class="fld" id="mineNote" maxlength="200" placeholder="Note (facultatif)">${esc(draft.note || '')}</textarea>
+    <div class="btns"><button class="btn primary" data-act="mine-save">Enregistrer</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+}
+function saveMine() {
+  if (!mineDraft) return;
+  const name = ($('#mineName').value || '').trim() || 'Mon point', note = ($('#mineNote').value || '').trim();
+  let id = mineDraft.id;
+  if (id && S.mine[id]) Object.assign(S.mine[id], {name, note, e: mineDraft.e});
+  else {
+    id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    S.mine[id] = {id, name, note, e: mineDraft.e, lat: mineDraft.lat, lng: mineDraft.lng, t: Date.now()};
+  }
+  mineDraft = null; renderMine(); scheduleSave(); closeModal(); openMine(id);
+}
+function deleteMine(id) {
+  delete S.mine[id]; delete S.photoMain[id];
+  photosOf(id).then(l => l.forEach(r => photoDel(r.id))).catch(() => {});
+  renderMine(); scheduleSave(); closeModal(); closeCard();
+}
+function openMine(id) {
+  const p = S.mine[id]; if (!p) return;
+  selected = p; closeSheet();
+  const gm = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=walking`;
+  const card = $('#card');
+  card.innerHTML = `<div class="pc-top">
+      <div class="pc-ic" id="pcIc" style="--c:var(--teal)">${esc(p.e || '📍')}</div>
+      <div class="pc-main">
+        <div class="pc-k">Mon point · privé</div>
+        <div class="pc-n">${esc(p.name)}</div>
+        ${p.note ? `<div class="pc-s">${esc(p.note)}</div>` : ''}
+        <div class="pc-meta">Ajouté le ${new Date(p.t).toLocaleDateString('fr-FR', {day: 'numeric', month: 'long'})}</div>
+      </div>
+      <button class="pc-x" data-act="close-card" aria-label="Fermer">✕</button>
+    </div>
+    <div class="pc-btns">
+      <button class="btn primary" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button>
+      <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
+    </div>
+    <div class="pc-btns"><button class="btn sm" data-act="mine-edit" data-id="${esc(p.id)}">✏️ Modifier</button><button class="btn sm danger" data-act="mine-del" data-id="${esc(p.id)}">🗑️ Supprimer</button></div>`;
+  card.classList.remove('hidden');
+  $('#explore').classList.add('hidden'); $('#locBtn').classList.add('hidden');
+  paintCardIcon(p.id);
+}
+// appui long sur la carte = nouveau point
+(() => {
+  const el = map.getContainer(), cancel = () => { if (lp) { clearTimeout(lp.t); lp = null; } };
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('.leaflet-marker-icon,.leaflet-control') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    cancel();
+    const r = el.getBoundingClientRect(), x = e.clientX, y = e.clientY;
+    lp = {x, y, t: setTimeout(() => {
+      lp = null; lpFired = true; setTimeout(() => { lpFired = false; }, 1500);
+      try { navigator.vibrate && navigator.vibrate(25); } catch (err) {}
+      const ll = map.containerPointToLatLng([x - r.left, y - r.top]);
+      newMineAt(ll.lat, ll.lng);
+    }, 650)};
+  });
+  el.addEventListener('pointermove', e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) cancel(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => el.addEventListener(t, cancel));
+  map.on('movestart zoomstart', cancel);
+})();
+
+// ---------- photos (IndexedDB, sur cet appareil) ----------
+let dbp = null;
+const idb = () => dbp || (dbp = new Promise((res, rej) => {
+  const r = indexedDB.open('brume-photos', 1);
+  r.onupgradeneeded = () => { r.result.createObjectStore('photos', {keyPath: 'id'}).createIndex('pid', 'pid'); };
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+}));
+const idbWait = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function photosOf(pid) { return idbWait((await idb()).transaction('photos').objectStore('photos').index('pid').getAll(pid)); }
+async function photoGet(id) { return idbWait((await idb()).transaction('photos').objectStore('photos').get(id)); }
+async function photoPut(rec) { const tx = (await idb()).transaction('photos', 'readwrite'); tx.objectStore('photos').put(rec); return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+async function photoDel(id) { const tx = (await idb()).transaction('photos', 'readwrite'); tx.objectStore('photos').delete(id); return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+function wipePhotos() {
+  return new Promise(res => {
+    setTimeout(res, 2500);
+    try {
+      (dbp ? dbp.then(d => d.close()).catch(() => {}) : Promise.resolve()).then(() => {
+        const r = indexedDB.deleteDatabase('brume-photos'); r.onsuccess = r.onerror = r.onblocked = () => res();
+      });
+    } catch (e) { res(); }
+  });
+}
+async function shrink(file, max = 1280) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); img.src = url; await img.decode();
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), 'image/jpeg', 0.82));
+  } finally { URL.revokeObjectURL(url); }
+}
+let galPid = null, galUrls = [];
+function revokeGal() { galUrls.forEach(u => URL.revokeObjectURL(u)); galUrls = []; }
+const placeName = pid => (S.mine[pid] || S.discovered[pid] || P.items[pid] || {}).name || 'Lieu';
+async function openGallery(pid) {
+  if (!needPremium()) return;
+  if (!S.mine[pid] && !S.discovered[pid]) { toast('🔒', 'Découvre ce lieu pour y ajouter des photos.', 'err'); return; }
+  let list;
+  try { list = (await photosOf(pid)).sort((a, b) => a.t - b.t); }
+  catch (e) { toast('⚠️', 'Photos indisponibles dans ce navigateur (navigation privée ?).', 'err', 5000); return; }
+  galPid = pid; revokeGal();
+  const main = S.photoMain[pid];
+  const thumbs = list.map(r => { const u = URL.createObjectURL(r.blob); galUrls.push(u); return `<button class="gt ${r.id === main ? 'main' : ''}" data-act="photo-open" data-id="${esc(r.id)}" style="background-image:url(${u})" aria-label="Photo"></button>`; }).join('');
+  modal(`<h2>📸 ${esc(placeName(pid))}</h2>
+    <p>${list.length ? `${list.length} photo${list.length > 1 ? 's' : ''} · visibles uniquement par toi` : 'Ajoute tes propres photos de ce lieu.'}</p>
+    ${thumbs ? `<div class="gal">${thumbs}</div>` : ''}
+    <div class="btns">
+      <label class="btn primary">📷 Prendre une photo<input type="file" class="photo-in" accept="image/*" capture="environment" hidden></label>
+      <label class="btn">🖼️ Depuis la galerie<input type="file" class="photo-in" accept="image/*" multiple hidden></label>
+      <button class="btn" data-act="modal-close">Fermer</button></div>`);
+}
+document.addEventListener('change', async e => {
+  const inp = e.target.closest && e.target.closest('.photo-in'); if (!inp || !galPid) return;
+  const pid = galPid, files = Array.from(inp.files || []); inp.value = '';
+  if (!files.length) return;
+  toast('📷', 'Enregistrement…', '', 1500);
+  try {
+    for (const f of files) {
+      const id = pid + '#' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      await photoPut({id, pid, blob: await shrink(f), t: Date.now()});
+      if (S.mine[pid] && !S.photoMain[pid]) S.photoMain[pid] = id;
+    }
+    scheduleSave(); await openGallery(pid); if (selected && selected.id === pid) paintCardIcon(pid);
+  } catch (err) { console.warn('[brume]', err); toast('⚠️', 'Impossible d’enregistrer cette photo.', 'err'); }
+});
+async function viewPhoto(id) {
+  let r; try { r = await photoGet(id); } catch (e) { return; }
+  if (!r) return;
+  revokeGal(); const u = URL.createObjectURL(r.blob); galUrls.push(u);
+  const isMain = S.photoMain[r.pid] === r.id;
+  modal(`<img class="gbig" src="${u}" alt="">
+    <div class="btns">
+      <button class="btn primary" data-act="photo-main" data-id="${esc(r.id)}">${isMain ? '⭐ Photo principale · retirer' : '⭐ En faire la photo principale'}</button>
+      <button class="btn danger" data-act="photo-del" data-id="${esc(r.id)}">🗑️ Supprimer</button>
+      <button class="btn" data-act="gallery" data-id="${esc(r.pid)}">← Retour</button></div>`);
+}
+async function setMainPhoto(id) {
+  const r = await photoGet(id); if (!r) return;
+  if (S.photoMain[r.pid] === id) delete S.photoMain[r.pid]; else S.photoMain[r.pid] = id;
+  scheduleSave(); toast('⭐', S.photoMain[r.pid] ? 'Photo principale mise à jour.' : 'Photo principale retirée.', '');
+  viewPhoto(id); if (selected && selected.id === r.pid) paintCardIcon(r.pid, true);
+}
+async function deletePhoto(id) {
+  const r = await photoGet(id); if (!r) return;
+  await photoDel(id); if (S.photoMain[r.pid] === id) delete S.photoMain[r.pid];
+  scheduleSave(); openGallery(r.pid); if (selected && selected.id === r.pid) paintCardIcon(r.pid, true);
+}
+// photo principale sur la fiche d'un lieu / sur la carte à collectionner
+async function paintCardIcon(pid, reset) {
+  const el = $('#pcIc'); if (!el) return;
+  const mid = S.photoMain[pid];
+  if (!mid) { if (reset) { el.style.backgroundImage = ''; el.classList.remove('ph'); const p = S.mine[pid] || S.discovered[pid]; if (p) el.textContent = S.mine[pid] ? (p.e || '📍') : (CATS[p.cat]?.e || '•'); } return; }
+  try {
+    const r = await photoGet(mid); if (!r || !selected || selected.id !== pid || !$('#pcIc')) return;
+    if (cardUrl) URL.revokeObjectURL(cardUrl);
+    cardUrl = URL.createObjectURL(r.blob);
+    el.style.backgroundImage = `url(${cardUrl})`; el.classList.add('ph'); el.textContent = '';
+  } catch (e) {}
+}
+async function applyMainPhoto(pid) {
+  const mid = S.photoMain[pid]; if (!mid) return;
+  try {
+    const r = await photoGet(mid); const art = document.querySelector('.tcg-art'); if (!r || !art) return;
+    const u = URL.createObjectURL(r.blob); galUrls.push(u);
+    art.querySelectorAll('img').forEach(i => i.remove());
+    const im = new Image(); im.alt = '';
+    im.onload = () => {
+      art.classList.add('ok');
+      const inf = document.querySelector('.tcg-info');
+      if (inf) inf.textContent = inf.textContent.includes('📷') ? inf.textContent.replace(/📷 \S+/, '📷 Ma photo') : inf.textContent + ' · 📷 Ma photo';
+    };
+    im.src = u; art.appendChild(im);
+  } catch (e) {}
+}
+
 // ---------- actions ----------
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
@@ -1390,6 +1630,18 @@ document.addEventListener('click', e => {
   else if (a === 'route') { const p = getPoi(id); closeSheet(); if (p) routeTo(p); }
   else if (a === 'clear-route') clearRoute();
   else if (a === 'show-card') showCard(id, false);
+  else if (a === 'gallery') openGallery(id);
+  else if (a === 'photo-open') viewPhoto(id);
+  else if (a === 'photo-main') setMainPhoto(id);
+  else if (a === 'photo-del') deletePhoto(id);
+  else if (a === 'mine-add') { const c = me ? {lat: me.lat, lng: me.lng} : map.getCenter(); newMineAt(c.lat, c.lng); }
+  else if (a === 'mine-emoji') { if (mineDraft) { mineDraft.e = el.dataset.e; document.querySelectorAll('.emopick button').forEach(b => b.classList.toggle('on', b === el)); } }
+  else if (a === 'mine-save') saveMine();
+  else if (a === 'mine-edit') { const p = S.mine[id]; if (p) mineForm({...p}); }
+  else if (a === 'mine-del') modal(`<div class="bige">🗑️</div><h2>Supprimer ce point ?</h2><p>Le point et ses photos seront supprimés de cet appareil.</p>
+      <div class="btns"><button class="btn danger" data-act="mine-del-yes" data-id="${esc(id)}">Supprimer</button><button class="btn" data-act="modal-close">Annuler</button></div>`);
+  else if (a === 'mine-del-yes') deleteMine(id);
+  else if (a === 'goto' && S.mine[id]) { const p = S.mine[id]; closeSheet(); follow = false; map.setView([p.lat, p.lng], Math.max(map.getZoom(), 16)); setTimeout(() => openMine(id), 350); }
   else if (a === 'goto') { const p = getPoi(id); if (p) { closeSheet(); follow = false; map.setView([p.lat, p.lng], Math.max(map.getZoom(), 16)); setTimeout(() => { refreshMarkers(true); openPoi(p); }, 350); } }
   else if (a === 'zone') { const z = Z.list.find(x => x.id === id); if (z) { closeSheet(); follow = false; map.fitBounds([[z.bbox[1], z.bbox[0]], [z.bbox[3], z.bbox[2]]], {padding: [30, 30]}); } }
   else if (a === 'demo') {
@@ -1408,7 +1660,7 @@ document.addEventListener('click', e => {
     resetting = true; window.__brumeReset = true; clearTimeout(saveTimer); saveTimer = 0;
     stopSim(); if (watchId != null) navigator.geolocation.clearWatch(watchId);
     ['brume.state', 'brume.cells', 'brume.zones', 'brume.pois', 'brume.pois2'].forEach(k => LS.del(k));
-    location.reload();
+    wipePhotos().then(() => location.reload());
   }
   else if (a === 'modal-close') closeModal();
   else if (a === 'start') { closeModal(); S.onboarded = true; S.demo = false; startExplore(); }
@@ -1416,7 +1668,7 @@ document.addEventListener('click', e => {
 });
 
 // ---------- démarrage ----------
-renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true);
+renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true); renderMine();
 if (!S.onboarded) {
   modal(`<div class="logo"></div><h2>Brume</h2><p>Le monde est couvert de brume. Marche pour la dissiper, découvre les lieux cachés et monte en niveau.</p>
     <ul class="tips">
@@ -1430,7 +1682,7 @@ if (S.lastPos) { ensurePoisAround(S.lastPos[0], S.lastPos[1]); }
 setInterval(() => { renderHud(); }, 60000);
 
 // accès pour les tests
-window.__brume = {S, P, Z, cells, processPos, map};
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf};
 })();
 </script>
 </body>
