@@ -255,6 +255,22 @@ textarea.fld{min-height:76px;resize:none}
 .pc-photo{position:relative;margin-top:10px;height:150px;border-radius:14px;overflow:hidden;background:#0c1018}
 .pc-photo img{display:block;width:100%;height:100%;object-fit:cover}
 .pc-photo span{position:absolute;left:8px;bottom:6px;padding:2px 8px;border-radius:8px;background:rgba(8,12,20,.7);font-size:11px;font-weight:600;color:#cfd5e2}
+/* tournée optimisée */
+#tourBtn{bottom:calc(var(--tabs) + var(--sb) + 134px);font-size:22px;line-height:1}
+#locBtn.hidden ~ #tourBtn{display:none}
+#tourBtn .tcount{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--amber);color:#1b1206;font:700 12px/20px 'Outfit',sans-serif;font-style:normal;text-align:center}
+.tlist{margin-top:12px;display:flex;flex-direction:column;gap:6px;text-align:left}
+.trow{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:14px;background:rgba(255,255,255,.06)}
+.tn{flex:none;width:24px;height:24px;border-radius:50%;background:var(--amber);color:#1b1206;font-weight:800;font-size:13px;display:grid;place-items:center}
+.te{flex:none;font-size:20px}
+.tl{flex:1;min-width:0}
+.tl b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl small{color:var(--muted);font-size:12px}
+.tx{flex:none;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.08);font-size:13px}
+.tsum{margin:12px 0 0!important;font-size:14px;color:var(--text)!important}
+.tsum b{color:var(--amber)}
+.tg{color:var(--teal);font-weight:700}
+.tnum{width:26px;height:26px;border-radius:50%;background:var(--amber);color:#1b1206;border:2px solid #fff;font-weight:800;font-size:13px;display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,0,0,.5)}
 /* mise à jour disponible */
 #upd{position:fixed;left:10px;right:10px;top:calc(var(--st) + 8px);z-index:1300;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:var(--panel);border:1px solid var(--teal);box-shadow:0 12px 30px -10px rgba(0,0,0,.7);font-size:14px;font-weight:600;animation:up .28s ease-out}
 #upd span{flex:1}
@@ -285,6 +301,7 @@ textarea.fld{min-height:76px;resize:none}
 </button>
 
 <button class="fab" id="addBtn" data-act="mine-add" aria-label="Ajouter un point perso">📍</button>
+<button class="fab hidden" id="tourBtn" data-act="tour-open" aria-label="Ma tournée">🧭<i class="tcount" id="tourCount">0</i></button>
 
 <div id="explore">
   <button id="exploreBtn"><span class="dot"></span><span id="exploreLabel">Explorer</span></button>
@@ -390,7 +407,7 @@ const defaultState = () => ({
   v: 1, xp: 0, discovered: {}, daily: null, streak: {count: 0, best: 0, last: null},
   badges: {}, flags: {}, stats: {dist: 0, since: Date.now()}, lastPos: null,
   autoStart: false, demo: false, onboarded: false,
-  mine: {}, photoMain: {},
+  mine: {}, photoMain: {}, tour: [],
   avatar: {shape: 'dot', color: '#4fe0b5', mascot: '', halo: 'pulse', trail: false, aura: true}
 });
 let S = Object.assign(defaultState(), parse(LS.get('brume.state'), {}));
@@ -1238,7 +1255,7 @@ function openPoi(p) {
       ${st === 'f' ? `<button class="btn primary" data-act="show-card" data-id="${esc(p.id)}">🃏 Voir la carte</button>` : `<button class="btn primary" data-act="route" data-id="${esc(p.id)}">🚶 Y aller</button>`}
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
     </div>
-    ${st === 'f' ? `<div class="pc-btns"><button class="btn" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button></div>` : ''}`;
+    ${st === 'f' ? `<div class="pc-btns"><button class="btn" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button></div>` : `<div class="pc-btns"><button class="btn" data-act="tour-toggle" data-id="${esc(p.id)}">${inTour(p.id) ? '✓ Dans ma tournée · retirer' : '🧭 Ajouter à ma tournée'}</button></div>`}`;
   card.classList.remove('hidden');
   $('#explore').classList.add('hidden'); $('#locBtn').classList.add('hidden');
   updateCardMeta();
@@ -1260,6 +1277,7 @@ function closeCard() {
 // ---------- itinéraire ----------
 let route = null;
 function clearRoute() {
+  if (tour) { tour.layers.forEach(l => map.removeLayer(l)); tour = null; }
   if (route) { route.layers.forEach(l => map.removeLayer(l)); route = null; }
   $('#routeChip').classList.add('hidden');
 }
@@ -1292,6 +1310,7 @@ async function routeTo(p) {
   updateRoute();
 }
 function updateRoute() {
+  if (tour) { updateTour(); return; }
   if (!route || !me) return;
   const L2 = route.line;
   let bi = 0, bd = Infinity;
@@ -1309,6 +1328,154 @@ function arrive() {
   const p = route.p; clearRoute();
   if (!S.discovered[p.id] && P.items[p.id]) discover(P.items[p.id]);
   toast('🏁', 'Tu es arrivé !', 'gold');
+}
+
+// ---------- tournée optimisée (premium) ----------
+const TOUR_MAX = 15, WALK_MS = 1.3;   // m/s, même vitesse que l'itinéraire simple
+let tour = null, tourMeta = null;
+if (!Array.isArray(S.tour)) S.tour = [];
+const inTour = id => S.tour.some(t => t.id === id);
+function tourSnap(p) {
+  const mine = !!S.mine[p.id];
+  return {id: p.id, lat: p.lat, lng: p.lng, name: p.name, cat: p.cat || '', e: mine ? (p.e || '📍') : '', img: p.img || '', mine};
+}
+function tourView(t) {   // ce qu'on a le droit d'afficher : les lieux mystère restent cachés
+  if (t.mine) return {name: t.name, e: t.e || '📍'};
+  const p = getPoi(t.id) || t, st = poiState(p), d = getDaily();
+  const pre = st === 'm' && !(d.mystery && d.mystery.id === t.id) && !!(p.img || t.img) && isPremium();
+  if (st === 'm' && !pre) return {name: 'Lieu mystère', e: '?'};
+  return {name: p.name || t.name, e: CATS[p.cat || t.cat]?.e || '•'};
+}
+function updateTourBtn() { $('#tourBtn').classList.toggle('hidden', !S.tour.length); $('#tourCount').textContent = S.tour.length; }
+function toggleTour(id) {
+  if (!needPremium()) return;
+  const p = S.mine[id] || getPoi(id); if (!p) return;
+  const i = S.tour.findIndex(t => t.id === id);
+  if (i >= 0) { S.tour.splice(i, 1); toast('🧭', 'Retiré de ta tournée.', ''); }
+  else {
+    if (S.tour.length >= TOUR_MAX) { toast('🧭', `Ta tournée est limitée à ${TOUR_MAX} lieux.`, 'err'); return; }
+    S.tour.push(tourSnap(p)); toast('🧭', `Ajouté à ta tournée (${S.tour.length}).`, '');
+  }
+  tourMeta = null; updateTourBtn(); scheduleSave();
+  if (S.mine[id]) openMine(id); else openPoi(p);
+}
+// distances à pied entre tous les points (service OSRM), sinon distance à vol d'oiseau × 1,3
+async function walkMatrix(pts) {
+  const n = pts.length;
+  try {
+    const coords = pts.map(p => `${p.lng},${p.lat}`).join(';');
+    const r = await fetchT(`https://routing.openstreetmap.de/routed-foot/table/v1/driving/${coords}?annotations=distance`, {}, 15000);
+    const j = await r.json();
+    if (j.code === 'Ok' && Array.isArray(j.distances) && j.distances.length === n && j.distances.every(row => row.length === n && row.every(v => typeof v === 'number'))) return {D: j.distances, real: true};
+  } catch (e) {}
+  return {D: pts.map(a => pts.map(b => hav(a.lat, a.lng, b.lat, b.lng) * 1.3)), real: false};
+}
+// meilleur ordre de visite en partant du point 0 (sans retour) : exact jusqu'à 9 lieux, sinon plus proche voisin + 2-opt
+function bestOrder(D) {
+  const n = D.length; if (n < 2) return [];
+  const plen = o => { let s = 0, a = 0; for (const j of o) { s += D[a][j]; a = j; } return s; };
+  const m = n - 1;
+  if (m <= 9) {
+    let best = Infinity, bo = null; const used = Array(n).fill(false), cur = [];
+    (function dfs(last, len) {
+      if (len >= best) return;
+      if (cur.length === m) { best = len; bo = cur.slice(); return; }
+      for (let j = 1; j < n; j++) if (!used[j]) { used[j] = true; cur.push(j); dfs(j, len + D[last][j]); cur.pop(); used[j] = false; }
+    })(0, 0);
+    return bo;
+  }
+  const left = new Set(); for (let j = 1; j < n; j++) left.add(j);
+  let o = [], a = 0;
+  while (left.size) { let bj = -1, bd = Infinity; for (const j of left) if (D[a][j] < bd) { bd = D[a][j]; bj = j; } o.push(bj); left.delete(bj); a = bj; }
+  for (let improved = true, guard = 0; improved && guard < 50; guard++) {
+    improved = false;
+    for (let i = 0; i < o.length - 1; i++) for (let k = i + 1; k < o.length; k++) {
+      const c = o.slice(0, i).concat(o.slice(i, k + 1).reverse(), o.slice(k + 1));
+      if (plen(c) < plen(o) - 1e-6) { o = c; improved = true; }
+    }
+  }
+  return o;
+}
+async function optimizeTour() {
+  if (S.tour.length < 2) { toast('🧭', 'Ajoute au moins 2 lieux pour optimiser.', 'err'); return; }
+  toast('⚡', 'Calcul du meilleur ordre…', '', 1800);
+  const withMe = !!me, stops = S.tour.slice();
+  const pts = (withMe ? [{lat: me.lat, lng: me.lng}] : []).concat(stops);
+  const {D, real} = await walkMatrix(pts);
+  const plen = o => { let s = 0, a = 0; for (const j of o) { s += D[a][j]; a = j; } return s; };
+  const order = bestOrder(D);
+  const orig = plen(Array.from({length: pts.length - 1}, (_, i) => i + 1)), best = plen(order);
+  const seq = [0].concat(order), legs = [];
+  for (let k = 1; k < seq.length; k++) legs.push(D[seq[k - 1]][seq[k]]);
+  if (!withMe) legs.unshift(0);
+  S.tour = withMe ? order.map(j => stops[j - 1]) : [stops[0]].concat(order.map(j => stops[j]));
+  tourMeta = {total: best, saved: Math.max(0, orig - best), legs, real};
+  scheduleSave(); openTour();
+}
+function openTour() {
+  if (!needPremium()) return;
+  if (!S.tour.length) { toast('🧭', 'Ta tournée est vide : ajoute des lieux depuis leur fiche.', ''); return; }
+  const rows = S.tour.map((t, i) => {
+    const v = tourView(t), leg = tourMeta && tourMeta.legs ? tourMeta.legs[i] : null;
+    const from = i ? 'l’étape précédente' : 'ta position';
+    return `<div class="trow"><span class="tn">${i + 1}</span><span class="te">${esc(v.e)}</span><div class="tl"><b>${esc(v.name)}</b>${leg != null && (i || me) ? `<small>${fmtDist(leg)} depuis ${from}</small>` : ''}</div><button class="tx" data-act="tour-rm" data-id="${esc(t.id)}" aria-label="Retirer">✕</button></div>`;
+  }).join('');
+  const sum = tourMeta ? `<p class="tsum">≈ <b>${fmtDist(tourMeta.total)}</b> · ${Math.max(1, Math.round(tourMeta.total / WALK_MS / 60))} min à pied${tourMeta.saved > 50 ? ` · <span class="tg">${fmtDist(tourMeta.saved)} économisés</span>` : ''}${tourMeta.real ? '' : ' (estimation)'}</p>` : '';
+  modal(`<h2>🧭 Ma tournée</h2>
+    <p>${S.tour.length} lieu${S.tour.length > 1 ? 'x' : ''} · ${me ? 'départ depuis ta position' : 'départ du premier lieu (lance l’exploration pour partir de toi)'}</p>
+    <div class="tlist">${rows}</div>${sum}
+    <div class="btns"><button class="btn primary" data-act="tour-opt">⚡ Optimiser l’ordre</button><button class="btn" data-act="tour-go">🚶 Démarrer la tournée</button><button class="btn danger" data-act="tour-clear">Vider la tournée</button><button class="btn" data-act="modal-close">Fermer</button></div>`);
+}
+async function startTour() {
+  if (!S.tour.length) return;
+  if (!me) { toast('📍', 'Lance l’exploration pour démarrer la tournée depuis ta position.', 'err'); return; }
+  closeModal(); clearRoute(); closeCard();
+  const chip = $('#routeChip'); chip.innerHTML = '🧭 Calcul de la tournée…'; chip.classList.remove('hidden');
+  const stops = S.tour.slice();
+  let line;
+  try {
+    const coords = [[me.lng, me.lat]].concat(stops.map(t => [t.lng, t.lat])).map(c => c.join(',')).join(';');
+    const r = await fetchT(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coords}?overview=full&geometries=geojson`, {}, 20000);
+    const j = await r.json();
+    if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error('no route');
+    line = j.routes[0].geometry.coordinates.map(([x, y]) => [y, x]);
+  } catch (e) {
+    line = [[me.lat, me.lng]].concat(stops.map(t => [t.lat, t.lng]));
+    toast('🧭', 'Itinéraire détaillé indisponible : trajet à vol d’oiseau affiché.', 'err');
+  }
+  const layers = [
+    L.polyline(line, {color: '#ffb547', weight: 10, opacity: .22, interactive: false}),
+    L.polyline(line, {color: '#ffcf7a', weight: 4, opacity: .95, dashArray: '2 10', lineCap: 'round', interactive: false})
+  ].concat(stops.map((t, i) => L.marker([t.lat, t.lng], {interactive: false, keyboard: false, zIndexOffset: 400, icon: L.divIcon({className: '', iconSize: [26, 26], iconAnchor: [13, 13], html: `<div class="tnum">${i + 1}</div>`})})));
+  layers.forEach(l => l.addTo(map));
+  tour = {i: 0, stops, line, layers};
+  follow = false;
+  map.fitBounds(L.latLngBounds(line).pad(0.25), {paddingTopLeft: [20, 130], paddingBottomRight: [20, 150]});
+  setTimeout(() => { follow = true; }, 2500);
+  updateTour();
+}
+function finishTour() {
+  if (!tour) return;
+  tour.layers.forEach(l => map.removeLayer(l)); tour = null;
+  $('#routeChip').classList.add('hidden');
+  toast('🏁', 'Tournée terminée, bravo !', 'gold', 4500);
+}
+function updateTour() {
+  if (!tour || !me) return;
+  while (tour) {
+    const t = tour.stops[tour.i]; if (!t) { finishTour(); return; }
+    const d = hav(me.lat, me.lng, t.lat, t.lng);
+    if (d < 35 || (S.discovered[t.id] && d < 70)) {   // étape atteinte
+      S.tour = S.tour.filter(x => x.id !== t.id); updateTourBtn(); scheduleSave();
+      tour.i++;
+      if (!S.mine[t.id] && !S.discovered[t.id] && P.items[t.id]) discover(P.items[t.id]);
+      else toast('📍', `Étape atteinte : <b>${esc(tourView(t).name)}</b>`, '', 2800);
+      continue;
+    }
+    const n = tour.stops.length, v = tourView(t);
+    $('#routeChip').innerHTML = `🧭 <b>${fmtDist(d)}</b> · étape ${tour.i + 1}/${n} · <span class="zn">${esc(v.name)}</span><button class="x" data-act="clear-route" aria-label="Arrêter">✕</button>`;
+    return;
+  }
 }
 
 // ---------- exploration / GPS ----------
@@ -1602,7 +1769,7 @@ function openMine(id) {
       <button class="btn primary" data-act="gallery" data-id="${esc(p.id)}">📸 Mes photos</button>
       <a class="btn" href="${gm}" target="_blank" rel="noopener">Google Maps ↗</a>
     </div>
-    <div class="pc-btns"><button class="btn sm" data-act="mine-edit" data-id="${esc(p.id)}">✏️ Modifier</button><button class="btn sm danger" data-act="mine-del" data-id="${esc(p.id)}">🗑️ Supprimer</button></div>`;
+    <div class="pc-btns"><button class="btn sm" data-act="tour-toggle" data-id="${esc(p.id)}">${inTour(p.id) ? '✓ Dans ma tournée' : '🧭 Tournée'}</button><button class="btn sm" data-act="mine-edit" data-id="${esc(p.id)}">✏️ Modifier</button><button class="btn sm danger" data-act="mine-del" data-id="${esc(p.id)}">🗑️</button></div>`;
   card.classList.remove('hidden');
   $('#explore').classList.add('hidden'); $('#locBtn').classList.add('hidden');
   paintCardIcon(p.id);
@@ -1752,6 +1919,12 @@ document.addEventListener('click', e => {
   else if (a === 'route') { const p = getPoi(id); closeSheet(); if (p) routeTo(p); }
   else if (a === 'clear-route') clearRoute();
   else if (a === 'show-card') showCard(id, false);
+  else if (a === 'tour-toggle') toggleTour(id);
+  else if (a === 'tour-open') openTour();
+  else if (a === 'tour-opt') optimizeTour();
+  else if (a === 'tour-go') startTour();
+  else if (a === 'tour-rm') { S.tour = S.tour.filter(t => t.id !== id); tourMeta = null; updateTourBtn(); scheduleSave(); if (S.tour.length) openTour(); else closeModal(); }
+  else if (a === 'tour-clear') { S.tour = []; tourMeta = null; clearRoute(); updateTourBtn(); scheduleSave(); closeModal(); }
   else if (a === 'update') { saveNow(); location.replace(location.pathname + '?v=' + Date.now()); }
   else if (a.startsWith('av-')) setAvatar(a.slice(3), el.dataset.v, +el.dataset.lv || 1);
   else if (a === 'gallery') openGallery(id);
@@ -1792,7 +1965,7 @@ document.addEventListener('click', e => {
 });
 
 // ---------- démarrage ----------
-renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true); renderMine();
+renderHud(); renderExplore(); updateZoneChip(); refreshMarkers(true); renderMine(); updateTourBtn();
 if (!S.onboarded) {
   modal(`<div class="logo"></div><h2>Brume</h2><p>Le monde est couvert de brume. Marche pour la dissiper, découvre les lieux cachés et monte en niveau.</p>
     <ul class="tips">
@@ -1807,7 +1980,7 @@ setInterval(() => { renderHud(); }, 60000);
 
 // accès pour les tests
 // ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
-const BUILD = '2026-11-24.2';   // à changer à chaque nouvelle version publiée
+const BUILD = '2026-11-24.3';   // à changer à chaque nouvelle version publiée
 let updAsked = 0;
 async function checkUpdate() {
   if (updAsked || $('#upd') || document.hidden) return;
@@ -1825,7 +1998,7 @@ async function checkUpdate() {
 setTimeout(checkUpdate, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
-window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate};
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder};
 })();
 </script>
 </body>
