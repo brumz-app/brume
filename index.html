@@ -1473,6 +1473,7 @@ function viewProfil() {
       <div class="stat"><b>${area.toFixed(area < 10 ? 2 : 1).replace('.', ',')}</b><span>km² explorés</span></div>
       <div class="stat"><b>${(S.stats.dist / 1000).toFixed(1).replace('.', ',')}</b><span>km parcourus</span></div>
       <div class="stat"><b>${nFound()}</b><span>lieux découverts</span></div></div></div>`;
+  h += viewAvatar();
   h += `<div class="sec"><h3>Zones explorées</h3>`;
   const zs = Z.list.filter(z => z.count > 0).sort((x, y) => zonePct(y) - zonePct(x));
   if (!zs.length) h += `<div class="empty">Tes quartiers, arrondissements et villes apparaîtront ici dès que tu commenceras à marcher.</div>`;
@@ -1492,7 +1493,6 @@ function viewProfil() {
     else h += `<div class="bdg ${got ? 'got' : 'lock'}"><div class="e">${bd.e}</div><div class="n">${esc(bd.n)}</div><div class="d">${esc(bd.d)}</div></div>`;
   }
   h += `</div></div>`;
-  h += viewAvatar();
   h += `<div class="sec"><h3>Premium</h3>
     <div class="card"><div class="ttl">✨ Brume Premium · offert pendant les tests</div>
       <div class="sub">Points perso privés (touche 📍 ou appui long sur la carte) · galerie de photos sur chaque lieu · photo principale de ta carte à collectionner.</div></div></div>`;
