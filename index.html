@@ -55,6 +55,8 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;paddin
 .chip .zn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw}
 .chip .pct{color:var(--teal);font-weight:700;font-variant-numeric:tabular-nums}
 .chip.route{border-color:rgba(255,181,71,.4)}
+.chip.load{border-color:rgba(145,135,255,.45);color:#d9d6ff;font-weight:600}
+.chip.load.err{border-color:rgba(255,181,71,.5);color:#ffe2b0}
 .chip.route b{color:var(--amber)}
 .chip .x{margin-left:4px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.08);font-size:12px}
 
@@ -328,6 +330,7 @@ textarea.fld{min-height:76px;resize:none}
 <div class="chips">
   <button class="chip" id="zoneChip" data-act="tab" data-tab="profil">📍 <span class="zn" id="zoneName">Zone inconnue</span> <span class="pct" id="zonePct"></span></button>
   <div class="chip route hidden" id="routeChip"></div>
+  <button class="chip load hidden" id="loadChip" data-act="retry-poi"></button>
 </div>
 
 <div id="toasts"></div>
@@ -381,10 +384,13 @@ const MAX_SPEED = 7;                        // au-delà (≈25 km/h) on considè
 const POI_TILE = 0.02;                      // tuiles de chargement des lieux (≈2 km)
 const FOG = 'rgba(14,18,28,0.9)';
 const KYOTO = [35.0037, 135.7788];
-const OVERPASS = [
+const OVERPASS = [   // serveurs publics gratuits, souvent lents ou en panne : on en interroge plusieurs, le plus rapide gagne
+  'https://overpass.openstreetmap.fr/api/interpreter',
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+  'https://z.overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter'
 ];
 
 const CATS = {
@@ -809,17 +815,20 @@ function checkMilestones(z) {
     }
   }
 }
-function makeQueue(gap) {
-  const q = []; let busy = false; const keys = new Set();
-  const pump = async () => {
-    if (busy || !q.length) return; busy = true;
-    const t = q.shift();
-    try { await t.fn(); } catch (e) { console.warn('[brume]', t.key, e); t.onErr && t.onErr(e); }
-    keys.delete(t.key); busy = false; setTimeout(pump, gap);
+function makeQueue(gap, conc = 1) {   // conc = nombre de tâches menées en même temps
+  const q = []; let busy = 0; const keys = new Set();
+  const pump = () => {
+    while (busy < conc && q.length) {
+      busy++; const t = q.shift();
+      (async () => {
+        try { await t.fn(); } catch (e) { console.warn('[brume]', t.key, e); t.onErr && t.onErr(e); }
+        keys.delete(t.key); busy--; setTimeout(pump, gap);
+      })();
+    }
   };
-  return {add(key, fn, onErr) { if (keys.has(key)) return; keys.add(key); q.push({key, fn, onErr}); pump(); }};
+  return {add(key, fn, onErr) { if (keys.has(key)) return; keys.add(key); q.push({key, fn, onErr}); pump(); }, size: () => q.length + busy};
 }
-const nomQ = makeQueue(1200), ovQ = makeQueue(1500);
+const nomQ = makeQueue(1200), ovQ = makeQueue(900, 2);
 
 async function fetchZone(lat, lng, lv) {
   const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lng.toFixed(5)}&zoom=${lv.zoom}&polygon_geojson=1&polygon_threshold=0.0001&namedetails=1&accept-language=fr`;
@@ -940,18 +949,37 @@ async function resolveImages(list) {
   }
   for (const p of list) delete p.wpt;
 }
-async function overpass(q) {
-  let last;
-  for (let k = 0; k < OVERPASS.length; k++) {
-    const url = OVERPASS[(ovMirror + k) % OVERPASS.length];
-    try {
-      const r = await fetchT(url, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'data=' + encodeURIComponent(q)}, 40000);
-      if (!r.ok) throw new Error('overpass ' + r.status);
-      ovMirror = (ovMirror + k) % OVERPASS.length;
-      return await r.json();
-    } catch (e) { last = e; }
-  }
-  throw last;
+// Interroge les serveurs en escalade : le suivant démarre dès qu'un échec arrive, ou si le serveur tarde plus de 5 s,
+// sans abandonner les précédents. Le premier qui répond bien gagne, les autres sont annulés.
+function overpass(q) {
+  return new Promise((resolve, reject) => {
+    const order = OVERPASS.map((_, k) => OVERPASS[(ovMirror + k) % OVERPASS.length]);
+    const ctls = []; let started = 0, failed = 0, done = false, timer = 0, lastErr;
+    const next = () => {
+      clearTimeout(timer);
+      if (done || started >= order.length) return;
+      const url = order[started++], ac = new AbortController(); ctls.push(ac);
+      const to = setTimeout(() => ac.abort(), 45000);
+      fetch(url, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'data=' + encodeURIComponent(q), signal: ac.signal})
+        .then(async r => {
+          if (!r.ok) throw new Error('overpass ' + r.status);
+          const j = await r.json();
+          // un serveur surchargé peut répondre « 200 » avec une liste vide et une remarque d'erreur : ce n'est pas un vrai résultat
+          if (!j || !Array.isArray(j.elements) || (j.remark && /error|timed out|out of memory/i.test(j.remark))) throw new Error('overpass remark: ' + ((j && j.remark) || 'réponse invalide'));
+          return j;
+        })
+        .then(j => { if (done) return; done = true; clearTimeout(timer); ctls.forEach(c => c.abort()); ovMirror = OVERPASS.indexOf(url); resolve(j); })
+        .catch(e => {
+          lastErr = e; failed++;
+          if (done) return;
+          if (started < order.length) next();
+          else if (failed >= started) { done = true; reject(lastErr); }
+        })
+        .finally(() => clearTimeout(to));
+      timer = setTimeout(next, 5000);
+    };
+    next();
+  });
 }
 let ovMirror = 0;
 async function loadTile(tk) {
@@ -968,33 +996,72 @@ nwr["wikipedia"]["name"]["historic"~"^(castle|monument|memorial|ruins|archaeolog
 nwr["wikidata"]["name"]["leisure"~"^(park|garden)$"](${bb});
 nwr["wikipedia"]["name"]["leisure"~"^(park|garden)$"](${bb});
 );out center tags qt;`;
-  const json = await overpass(q);
-  let fresh = [];
-  for (const el of json.elements || []) {
-    const p = parseEl(el); if (!p) continue;
-    // évite les doublons (même lieu en point + bâtiment)
-    if (fresh.some(o => o.name === p.name && o.cat === p.cat && hav(o.lat, o.lng, p.lat, p.lng) < 150)) continue;
-    fresh.push(p);
+  // le résultat d'Overpass est gardé en mémoire : si seule la recherche des photos échoue, un réessai ne refait pas le gros calcul
+  let fresh = TL.raw[tk];
+  if (!fresh) {
+    const json = await overpass(q);
+    fresh = [];
+    for (const el of json.elements) {
+      const p = parseEl(el); if (!p) continue;
+      // évite les doublons (même lieu en point + bâtiment)
+      if (fresh.some(o => o.name === p.name && o.cat === p.cat && hav(o.lat, o.lng, p.lat, p.lng) < 150)) continue;
+      fresh.push(p);
+    }
+    TL.raw[tk] = fresh;
   }
   // on ne garde que les lieux qui ont une photo (Wikidata / Wikipédia / Wikimedia Commons)
   await resolveImages(fresh);
-  fresh = fresh.filter(p => p.img);
-  for (const p of fresh) P.items[p.id] = p;
+  for (const p of fresh) if (p.img) P.items[p.id] = p;
   P.tiles[tk] = Date.now();
+  delete TL.raw[tk]; delete TL.tries[tk];
   savePois();
   onPoisChanged();
+  updateLoadChip();
 }
-function ensureTile(lat, lng) {
-  const tk = Math.floor(lat / POI_TILE) + ',' + Math.floor(lng / POI_TILE);
-  const now = Date.now();
-  if (P.tiles[tk] && now - P.tiles[tk] < 30 * 864e5) return;
-  if (P.fail[tk] && now - P.fail[tk] < 90000) return;
-  ovQ.add(tk, () => loadTile(tk), () => { P.fail[tk] = Date.now(); });
+// ---- chargement des lieux : une tuile à la fois par serveur, réessais automatiques, état visible ----
+const TL = {tries: {}, retry: new Set(), raw: {}};
+const TILE_RETRY = [20e3, 60e3, 180e3, 300e3], TILE_MAX_TRIES = 6;   // délais avant de réessayer une tuile qui a échoué
+function tileKey(lat, lng) { return Math.floor(lat / POI_TILE) + ',' + Math.floor(lng / POI_TILE); }
+function ensureKey(tk) {
+  if (P.tiles[tk] && Date.now() - P.tiles[tk] < 30 * 864e5) return;
+  if (TL.retry.has(tk)) return;                              // un réessai est déjà programmé
+  if ((TL.tries[tk] || 0) >= TILE_MAX_TRIES) return;         // trop d'échecs : on attend que le joueur touche l'indicateur
+  ovQ.add(tk, () => loadTile(tk), () => tileFailed(tk));
+  updateLoadChip();
 }
-function ensurePoisAround(lat, lng) {
+function ensureTile(lat, lng) { ensureKey(tileKey(lat, lng)); }
+function tileFailed(tk) {
+  const n = TL.tries[tk] = (TL.tries[tk] || 0) + 1;
+  if (n < TILE_MAX_TRIES) {
+    TL.retry.add(tk);
+    setTimeout(() => { TL.retry.delete(tk); ensureKey(tk); updateLoadChip(); }, TILE_RETRY[Math.min(n - 1, TILE_RETRY.length - 1)]);
+  }
+  updateLoadChip();
+}
+function ensurePoisAround(lat, lng) {   // autour du joueur : sa tuile d'abord, puis les 8 voisines
   ensureTile(lat, lng);
   for (const [dy, dx] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) ensureTile(lat + dy * POI_TILE, lng + dx * POI_TILE);
 }
+function ensureViewTiles() {   // quand on déplace la carte : TOUTES les tuiles visibles à l'écran (les plus proches du centre d'abord)
+  if (map.getZoom() < 14) return;
+  const b = map.getBounds(), c = map.getCenter(), keys = [];
+  for (let ty = Math.floor(b.getSouth() / POI_TILE); ty <= Math.floor(b.getNorth() / POI_TILE); ty++)
+    for (let tx = Math.floor(b.getWest() / POI_TILE); tx <= Math.floor(b.getEast() / POI_TILE); tx++) keys.push([ty, tx]);
+  const dist = k => Math.hypot((k[0] + .5) * POI_TILE - c.lat, (k[1] + .5) * POI_TILE - c.lng);
+  keys.sort((a, b2) => dist(a) - dist(b2));
+  for (const [ty, tx] of keys.slice(0, 12)) ensureKey(ty + ',' + tx);
+}
+function updateLoadChip() {
+  const el = $('#loadChip'); if (!el) return;
+  const busy = ovQ.size(), retrying = TL.retry.size;
+  const gaveUp = Object.keys(TL.tries).some(k => TL.tries[k] >= TILE_MAX_TRIES && !P.tiles[k]);
+  let txt = '', err = false;
+  if (busy) txt = '⏳ Chargement des lieux…' + (retrying ? ' (nouvelle tentative)' : '');
+  else if (retrying) { txt = '⚠️ Serveur de lieux lent ou indisponible · nouvelle tentative bientôt…'; err = true; }
+  else if (gaveUp) { txt = '⚠️ Lieux indisponibles ici · touche pour réessayer'; err = true; }
+  el.textContent = txt; el.classList.toggle('hidden', !txt); el.classList.toggle('err', err);
+}
+setInterval(updateLoadChip, 1500);
 function onPoisChanged() {
   if (me) { checkDiscoveries(); maybePickMystery(); }
   refreshMarkers(true);
@@ -1045,13 +1112,15 @@ function refreshMarkers(now) {
   const c = map.getCenter(); const cand = [];
   for (const p of pool) {
     if (!b.contains([p.lat, p.lng])) continue;
-    const st = poiState(p), daily = p.id === dm;
-    const show = daily || (z >= 15) || (z >= 14 && (p.r !== 'common' || st === 'f')) || (z >= 13 && (p.r === 'legend' || st === 'f'));
-    if (!show) continue;
-    cand.push({p, st, daily, own: ownCls(p), dd: Math.abs(p.lat - c.lat) + Math.abs(p.lng - c.lng)});
+    const st = poiState(p), daily = p.id === dm, own = ownCls(p);
+    // importance : le lieu du jour, tes découvertes, puis les légendaires, les rares, les lieux tenus par une équipe
+    const w = (daily ? 1000 : 0) + (st === 'f' ? 500 : 0) + (p.r === 'legend' ? 300 : p.r === 'rare' ? 100 : 0) + (own ? 40 : 0) + (p.big ? 5 : 0);
+    cand.push({p, st, daily, own, w, dd: Math.abs(p.lat - c.lat) + Math.abs(p.lng - c.lng)});
   }
-  cand.sort((a, b2) => (b2.daily - a.daily) || a.dd - b2.dd);
-  for (const o of cand.slice(0, 350)) want.set(o.p.id, o);
+  // de près on montre tout (les plus proches d'abord) ; en dézoomant, on garde seulement les plus importants, sans en cacher d'office
+  const cap = z >= 15 ? 350 : z >= 14 ? 70 : z >= 13 ? 30 : z >= 12 ? 15 : 8;
+  cand.sort(z >= 15 ? (a, b2) => (b2.daily - a.daily) || a.dd - b2.dd : (a, b2) => (b2.daily - a.daily) || (b2.w - a.w) || a.dd - b2.dd);
+  for (const o of cand.slice(0, cap)) want.set(o.p.id, o);
   for (const [id, m] of markers) if (!want.has(id)) { map.removeLayer(m.layer); markers.delete(id); }
   for (const [id, o] of want) {
     const sig = o.st + (o.daily ? 'd' : '') + o.own;
@@ -1065,7 +1134,7 @@ function refreshMarkers(now) {
 map.on('moveend', () => {
   refreshMarkers(true);
   fetchOwned(false);
-  if (map.getZoom() >= 14) { const c = map.getCenter(); ensureTile(c.lat, c.lng); }
+  ensureViewTiles();
   if (!me) updateZoneChip();
 });
 
@@ -2010,6 +2079,7 @@ document.addEventListener('click', e => {
   else if (a === 'auth-open') authForm('login');
   else if (a === 'auth-switch') { const keep = {email: ($('#aEmail') || {}).value, pseudo: ($('#aPseudo') || {}).value}; authForm(authMode === 'login' ? 'signup' : 'login', keep); }
   else if (a === 'noop') { /* rien */ }
+  else if (a === 'retry-poi') { TL.tries = {}; TL.retry.clear(); if (me) ensurePoisAround(me.lat, me.lng); ensureViewTiles(); updateLoadChip(); }
   else if (a === 'auth-submit') authSubmit();
   else if (a === 'pseudo-open') pseudoForm();
   else if (a === 'team-pick') { authTeam = el.dataset.v; document.querySelectorAll('#modal .tbtn').forEach(b => b.classList.toggle('on', b === el)); }
@@ -2509,7 +2579,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchOwned(true); });
 
 // ---------- mise à jour (le raccourci de l'écran d'accueil garde sinon l'ancienne version) ----------
-const BUILD = '2026-11-24.7';   // à changer à chaque nouvelle version publiée
+const BUILD = '2026-11-25.1';   // à changer à chaque nouvelle version publiée
 let updAsked = 0;
 async function checkUpdate() {
   if (updAsked || $('#upd') || document.hidden) return;
@@ -2527,7 +2597,7 @@ async function checkUpdate() {
 setTimeout(checkUpdate, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
-window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder, Net, sb, fetchOwned, ownInner, simClaim, simAdvance, simMine, simGet, TEAMS};
+window.__brume = {S, P, Z, cells, processPos, map, newMineAt, openMine, openGallery, showCard, photosOf, openPoi, checkUpdate, bestOrder, Net, sb, fetchOwned, ownInner, simClaim, simAdvance, simMine, simGet, TEAMS, TL, ovQ, overpass, ensureViewTiles, updateLoadChip, refreshMarkers};
 })();
 </script>
 </body>
